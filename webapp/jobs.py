@@ -117,7 +117,10 @@ class Job:
                 "status": self.status,
                 "stage": self.stage,
                 "setup": self.setup,
-                "history": {k: list(v) for k, v in self.history.items()},
+                # list(...) first: the worker thread adds history keys
+                # ("qubo", "audit_live", ...) without this lock, and iterating
+                # the live dict would raise "dictionary changed size"
+                "history": {k: list(v) for k, v in list(self.history.items())},
                 "log_lines": tail,
                 "log_cursor": total,
                 "error": self.error,

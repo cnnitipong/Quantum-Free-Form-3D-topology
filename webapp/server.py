@@ -847,6 +847,16 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
                 f"Exact enumeration is not available for '{req.benchmark_id}' (too many bars); "
                 f"choose a method such as 'oc_round' or 'qubo' instead.",
             )
+        if req.method in ("qubo", "oc_qubo") and req.backend and req.backend.lower() != "auto":
+            # an unknown / not installed backend is a bad request, not a job error
+            known = {b.get("name"): b for b in quantum_backends_payload().get("backends", [])}
+            b = known.get(req.backend.lower())
+            if b is None:
+                raise HTTPException(400, f"Unknown QUBO backend '{req.backend}'; choose from "
+                                         f"{['auto'] + sorted(known)}")
+            if not b.get("available", False):
+                raise HTTPException(400, f"QUBO backend '{req.backend}' is unavailable: "
+                                         f"{b.get('reason') or 'not installed'}")
         label = req.label or f"{bench.get('title', req.benchmark_id)} — {req.method}"
         job = manager.submit_truss(
             label, req.model_dump(), benchmark_id=bench["id"], method=req.method,

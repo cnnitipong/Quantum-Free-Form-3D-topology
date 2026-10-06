@@ -122,10 +122,16 @@ def run_qaoa(Q, h, const=0.0, p=3, shots=1000, seed=None, init="linear_ramp",
     maxiter = int(maxiter) if maxiter else 100 * p
     if span <= 0:
         # constant energy: every bitstring optimal
-        X = bits_of(rng.integers(0, 2 ** n, size=shots), n)
-        return dict(samples=X, energies=np.full(shots, Emin), x=X[0], energy=Emin,
+        X = bits_of(rng.integers(0, 2 ** n, size=int(shots)), n)
+        # same keys as the general case (the qiskit backends and the study's
+        # QAOA scans read E_min / best_shot_optimal / uniform_ratio ...)
+        return dict(samples=X, energies=np.full(int(shots), Emin), x=X[0], energy=Emin,
                     info={"p": p, "approx_ratio": 1.0, "p_opt": 1.0, "p_opt_shots": 1.0,
-                          "nfev": 0, "angles": [], "qaoa_time": time.perf_counter() - t0})
+                          "expected_energy": Emin, "E_min": Emin, "E_max": Emax,
+                          "nfev": 0, "angles": initial_angles(p).tolist(), "shots": int(shots),
+                          "best_shot_optimal": True, "best_shot_energy": Emin,
+                          "best_shot_ratio": 1.0, "uniform_ratio": 1.0, "uniform_p_opt": 1.0,
+                          "qaoa_time": time.perf_counter() - t0})
     Es = (E - Emin) / span
     nfev = 0
     if initial_params is not None and len(initial_params) == 2 * p:

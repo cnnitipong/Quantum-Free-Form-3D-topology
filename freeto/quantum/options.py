@@ -148,6 +148,14 @@ class QUBOOptions:
             raise ValueError("qubo.guard_tol and qubo.guard_tol_target must be >= 0")
         if int(o.max_rejects) < 0:
             raise ValueError("qubo.max_rejects must be >= 0")
+        if o.block_size is not None:
+            # a block larger than what the backend can solve (exact 24, QAOA 20
+            # qubits, ...) would otherwise only fail inside the first update
+            from .backends import BACKENDS
+            if o.backend in BACKENDS and BACKENDS[o.backend][2] is not None \
+                    and int(o.block_size) > BACKENDS[o.backend][2]:
+                raise ValueError(f"qubo.block_size = {int(o.block_size)} exceeds what backend "
+                                 f"'{o.backend}' can solve (n <= {BACKENDS[o.backend][2]})")
         if check_backend:
             from .backends import check_backend as _cb
             _cb(o.backend)

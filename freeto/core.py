@@ -334,14 +334,33 @@ class FreeTOConfig:
             raise FreeTOError("Please include at least one non-zero load definition.")
         if not all(math.isfinite(v) for v in c.fmagx + c.fmagy + c.fmagz):
             raise FreeTOError("Force magnitudes must be finite numbers.")
-        if not (float(c.youngs_modulus) > 0):
-            raise FreeTOError("youngs_modulus must be positive.")
+        if not (0 < float(c.youngs_modulus) < math.inf):
+            raise FreeTOError("youngs_modulus must be a positive finite number.")
         if not (-1.0 < float(c.poisson_ratio) < 0.5):
             raise FreeTOError("poisson_ratio must be in (-1, 0.5).")
-        if c.method == "SIMP" and not (float(c.penal) > 0):
-            raise FreeTOError("penal must be positive.")
-        if not (float(c.rmin) > 0):
-            raise FreeTOError("rmin must be positive.")
+        if c.method == "SIMP" and not (0 < float(c.penal) < math.inf):
+            raise FreeTOError("penal must be a positive finite number.")
+        if not (0 < float(c.rmin) < math.inf):
+            raise FreeTOError("rmin must be a positive finite number.")
+        # numeric extras: NaN tolerances silently skip the whole loop, beta <= 0
+        # breaks the Heaviside projection, mma_move = 0 freezes MMA
+        for nm in ("tolx", "tol_thresh"):
+            v = getattr(c, nm)
+            if v is not None and math.isnan(float(v)):
+                raise FreeTOError(f"{nm} must be a number (got NaN).")
+        if c.beta_init is not None and not (0 < float(c.beta_init) < math.inf):
+            raise FreeTOError("beta_init must be a positive finite number.")
+        if c.beta_step is not None and not (0 <= float(c.beta_step) < math.inf):
+            raise FreeTOError("beta_step must be a finite number >= 0.")
+        if c.beta_max is not None and not (float(c.beta_max) > 0):
+            raise FreeTOError("beta_max must be positive (math.inf = no cap).")
+        if not (0 < float(c.mma_move) <= 1):
+            raise FreeTOError("mma_move must be in (0, 1].")
+        if c.eval_beta is not None and not (0 < float(c.eval_beta) < math.inf):
+            raise FreeTOError("eval_beta must be a positive finite number.")
+        if c.eval_crisp is not None and not isinstance(c.eval_crisp, bool) \
+                and not (0 < float(c.eval_crisp) <= 1):
+            raise FreeTOError("eval_crisp must be True/False or a volume fraction in (0, 1].")
         if c.max_iter < 1:
             raise FreeTOError("max_iter must be >= 1.")
         if len(c.symmetry) > 3:
@@ -906,7 +925,8 @@ def run_freeto(cfg: FreeTOConfig, callback: Optional[Callable] = None,
         xb[np.isin(ele, MusD)] = 1.0
         extra["binary_compliance"] = _optional_eval("eval_binary", lambda: _fe_compliance(xb))
         extra["binary_volfrac"] = float(np.mean(xb == 1.0))
-    if c.eval_crisp is not None and loop > 0:
+    if c.eval_crisp is not None and c.eval_crisp is not False and loop > 0:
+        # eval_crisp=False means off (not a crisp design at volume 0)
         vt = float(vol if c.eval_crisp is True else c.eval_crisp)
         crisp = {}
 

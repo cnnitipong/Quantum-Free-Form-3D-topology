@@ -196,7 +196,12 @@ def _map_bcs(F, fixeddof, nelx, nely, nelz, f, act_nodes, bc_map, carry=None):
             wc_ = np.where(carry[idx], wts, 0.0)
             has = wc_.sum(axis=1) > 0
             wts = np.where(has[:, None], wc_, wts)
-        wts /= wts.sum(axis=1, keepdims=True)    # sum >= 1 (coincident node is in the region)
+        # sum >= 1 when the coincident node is active; a coarse load node outside
+        # the active domain (force region sticking out of a non-convex domain) has
+        # no active refined node: its load is dropped, as F[freedofs] drops it on
+        # the coarse grid (dividing by 0 put NaN loads on refined DOFs)
+        wsum = wts.sum(axis=1, keepdims=True)
+        wts = np.where(wsum > 0, wts / np.where(wsum > 0, wsum, 1.0), 0.0)
         for d in range(3):
             np.add.at(Ff[:, k], 3 * idx.ravel() + d, (wts * Fc[j, d, k][:, None]).ravel())
     return Ff, fixed_f

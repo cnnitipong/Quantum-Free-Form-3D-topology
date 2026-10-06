@@ -20,7 +20,7 @@ import signal
 import sys
 import threading
 
-from .core import FreeTOConfig, run_freeto
+from .core import FreeTOConfig, FreeTOError, run_freeto
 from .examples import EXAMPLES, example_config
 from .fe import available_solvers
 
@@ -185,7 +185,13 @@ def main(argv=None):
     log = (lambda s: None) if a.quiet else (lambda s: print(s, flush=True))
     if not a.quiet:
         log(f"available solvers: {', '.join(available_solvers())}")
-    res = run_freeto(cfg, stop_event=stop, log=log)
+    try:
+        res = run_freeto(cfg, stop_event=stop, log=log)
+    except FreeTOError as e:
+        # problems only detectable during setup (e.g. a load region without
+        # grid nodes at this mesh_control): same clean message as validate()
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     out = a.out
     if out:
         root, ext = os.path.splitext(out)
