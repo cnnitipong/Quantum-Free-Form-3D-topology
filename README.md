@@ -554,3 +554,7 @@ studies, audit columns), saving `webapp/screenshots/audit_*.png`.
 gracefully (not a failure) wherever `freeto.quantum` / `freeto.truss` / `freeto.study` /
 an `optimizer="QUBO"`-capable core aren't installed, so it stays green against any subset
 of the QUANTUM extension.
+
+## License
+
+MIT (see `LICENSE`). FreeTO-Python ports the MIT-licensed FreeTO and re-implements the BSD-licensed `intriangulation` test; their notices, and those of the bundled three.js and Chart.js, are in `THIRD_PARTY_NOTICES.md`. If you use this code, please cite the FreeTO paper above and the QUBO manuscript.
