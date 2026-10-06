@@ -1,0 +1,28 @@
+# FreeTO-Python dependencies (Python 3.10-3.13; binary wheels for win_amd64 and macOS arm64)
+#
+# Core (freeto/) numerical dependencies. numpy/scipy/scikit-image are also
+# required directly by webapp/ (the stub core + live-preview surface
+# extraction use them even before/without the real core), so they're listed
+# unconditionally rather than left commented out.
+numpy>=1.24
+scipy>=1.11
+scikit-image>=0.21
+# AMG-preconditioned CG for large problems. No CPython 3.14 wheels yet -> skip
+# there (freeto falls back to SuperLU automatically; see freeto/fe.py).
+pyamg>=5.0; python_version < "3.14"
+# Intel MKL PARDISO direct solver, ~3x faster FE solves. x86-64 Windows/Linux
+# only (the `mkl` wheel does not exist for macOS or ARM at all). ~200 MB
+# download, ~1 GB on disk the first time it installs.
+# freeto's PardisoSolver uses private pypardiso internals -> keep the <0.5 pin
+# until fe.py is updated to track a newer pypardiso release.
+pypardiso>=0.4.6,<0.5; (sys_platform == "win32" or sys_platform == "linux") and platform_machine in "x86_64 AMD64"
+# scikit-sparse (CHOLMOD) has no wheels at all; install by hand, e.g.
+# `brew install suite-sparse` then `<venv python> -m pip install scikit-sparse`.
+
+# Web app (webapp/)
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9
+
+# Study figures (python -m freeto.study); wheels on every platform
+matplotlib>=3.7

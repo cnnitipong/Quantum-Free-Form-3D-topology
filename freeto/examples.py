@@ -1,0 +1,249 @@
+"""The four README examples of FreeTO, plus six additional CONTINUUM example
+problems with programmatically generated geometry, as FreeTOConfig keyword
+sets.
+
+STL paths in ``config_kwargs`` are relative to ``examples/STLs/`` (the six
+additional examples' geometry lives under ``examples/STLs/generated/``, built
+by ``examples/make_examples.py`` from ``freeto.geometry``); use
+:func:`example_config` to get a ready-to-run :class:`FreeTOConfig`.
+
+Every entry has a ``category``: ``"paper"`` for the four original
+README/paper examples, and ``"beam"`` / ``"truss-like"`` / ``"advanced"`` for
+the six added ones (see ``examples/EXAMPLES.md`` for the full catalogue with
+renders, mesh sizes and timings). The web app's ``/api/examples`` listing
+only reads ``title``/``description`` and tolerates the extra key.
+"""
+from __future__ import annotations
+
+import os
+
+__all__ = ["EXAMPLES", "STL_DIR", "example_config"]
+
+STL_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..",
+                                        "examples", "STLs"))
+
+EXAMPLES = {
+    "GE_bracket": {
+        "title": "GE bracket (FreeTO airplane bearing bracket)",
+        "description": ("Example 1 of the FreeTO README: the GE bracket fixed "
+                        "at its four bolt holes, two load cases on the "
+                        "clevis (Fz = 1500 N, Fy = -2000 N), E = 210 GPa, "
+                        "30 % volume, SIMP + OC."),
+        "config_kwargs": dict(
+            domain="GE_domain.STL", forces=["GE_force.STL", "GE_force.STL"],
+            mesh_control=80, volfrac=0.3, fixed="GE_fixed.STL",
+            fmagx=[0.0], fmagy=[0.0, -2000.0], fmagz=[1500.0, 0.0],
+            youngs_modulus=210e9, method="SIMP"),
+        "category": "paper",
+        "files": {"domain": "GE_domain.STL", "fixed": "GE_fixed.STL",
+                  "force1": "GE_force.STL", "force2": "GE_force.STL"},
+    },
+    "air_bracket": {
+        "title": "Airplane bracket (half model)",
+        "description": ("Example 2: one half of an airplane bracket with a "
+                        "z-fixed symmetry face, three load cases, 20 % volume, "
+                        "SEMDOT; mirrored about the x-y plane afterwards."),
+        "config_kwargs": dict(
+            domain="air_domain.STL",
+            forces=["air_force.STL", "air_force.STL", "air_force.STL"],
+            mesh_control=90, volfrac=0.2, fixed="air_fixed.STL",
+            zfixed="air_zfixed.STL",
+            fmagx=[1000.0, 1324.0, 0.0], fmagy=[0.0, -1324.0, -2500.0],
+            fmagz=[0.0], youngs_modulus=210e9, method="SEMDOT",
+            symmetry=[("x-y", "right")]),
+        "category": "paper",
+        "files": {"domain": "air_domain.STL", "fixed": "air_fixed.STL",
+                  "zfixed": "air_zfixed.STL", "force1": "air_force.STL",
+                  "force2": "air_force.STL", "force3": "air_force.STL"},
+    },
+    "hand": {
+        "title": "Human hand",
+        "description": ("Example 3: a hand model fixed at the wrist with "
+                        "2 kN loads on the five fingertips (five load cases), "
+                        "30 % volume, SIMP."),
+        "config_kwargs": dict(
+            domain="hand_domain.stl",
+            forces=["hand_force1.stl", "hand_force2.stl", "hand_force3.stl",
+                    "hand_force4.stl", "hand_force5.stl"],
+            mesh_control=90, volfrac=0.3, fixed="hand_fixed.stl",
+            fmagx=[0.0], fmagy=[0.0], fmagz=[2000.0] * 5,
+            youngs_modulus=210e9, method="SIMP"),
+        "category": "paper",
+        "files": {"domain": "hand_domain.stl", "fixed": "hand_fixed.stl",
+                  "force1": "hand_force1.stl", "force2": "hand_force2.stl",
+                  "force3": "hand_force3.stl", "force4": "hand_force4.stl",
+                  "force5": "hand_force5.stl"},
+    },
+    "quadcopter": {
+        "title": "Quadcopter frame (quarter model)",
+        "description": ("Example 4: a quarter of a quadcopter frame with x/y "
+                        "symmetry supports, three load cases, E = 2 GPa, "
+                        "mirrored about the y-z and z-x planes."),
+        "config_kwargs": dict(
+            domain="quad_domain.STL",
+            forces=["quad_force1.STL", "quad_force2.STL", "quad_force3.STL"],
+            mesh_control=70, volfrac=0.3, fixed="quad_fixed.STL",
+            xfixed="quad_xfixed.STL", yfixed="quad_yfixed.STL",
+            fmagx=[0.0], fmagy=[0.0], fmagz=[-1500.0, -1500.0, -1000.0],
+            youngs_modulus=2e9, method="SIMP", keep_bcz=True,
+            symmetry=[("y-z", "right"), ("z-x", "left")]),
+        "category": "paper",
+        "files": {"domain": "quad_domain.STL", "fixed": "quad_fixed.STL",
+                  "xfixed": "quad_xfixed.STL", "yfixed": "quad_yfixed.STL",
+                  "force1": "quad_force1.STL", "force2": "quad_force2.STL",
+                  "force3": "quad_force3.STL"},
+    },
+    # ---- additional CONTINUUM examples (programmatic geometry) -----------
+    # generated by examples/make_examples.py from freeto.geometry; STL paths
+    # are relative to examples/STLs/, i.e. under examples/STLs/generated/.
+    "cantilever_beam": {
+        "title": "Cantilever beam",
+        "description": ("3D cantilever, 120x40x20 mm, fixed at the x=0 face "
+                        "with a downward point load at the free-end tip "
+                        "mid-height. E = 210 GPa, 30% volume, SIMP + OC. "
+                        "Classic result: two top/bottom flanges joined by a "
+                        "diagonal web from the support to the load."),
+        "config_kwargs": dict(
+            domain="generated/cantilever_domain.stl",
+            forces=["generated/cantilever_force.stl"],
+            mesh_control=50, volfrac=0.3, fixed="generated/cantilever_fixed.stl",
+            fmagy=[-1000.0], youngs_modulus=210e9, method="SIMP"),
+        "category": "beam",
+        "files": {"domain": "generated/cantilever_domain.stl",
+                  "fixed": "generated/cantilever_fixed.stl",
+                  "force1": "generated/cantilever_force.stl"},
+    },
+    "mbb_beam": {
+        "title": "MBB beam (half model)",
+        "description": ("Half of the classic MBB beam, 150x25x25 mm, using "
+                        "symmetry: a roller (y-fixed) support near the "
+                        "bottom of the far end, the x=max face as the "
+                        "symmetry plane (x-fixed) with the point load at its "
+                        "top, mirrored about that plane afterwards to give "
+                        "the full 300 mm beam. 30% volume, SIMP + OC. "
+                        "Classic result: a truss-like lattice of diagonal "
+                        "struts between the support and the load."),
+        "config_kwargs": dict(
+            domain="generated/mbb_domain.stl",
+            forces=["generated/mbb_force.stl"],
+            mesh_control=80, volfrac=0.3, yfixed="generated/mbb_yfixed.stl",
+            xfixed="generated/mbb_xfixed.stl",
+            zfixed="generated/mbb_zfixed.stl",
+            fmagy=[-1000.0], youngs_modulus=210e9, method="SIMP",
+            symmetry=[("y-z", "right")]),
+        "category": "beam",
+        "files": {"domain": "generated/mbb_domain.stl",
+                  "yfixed": "generated/mbb_yfixed.stl",
+                  "xfixed": "generated/mbb_xfixed.stl",
+                  "zfixed": "generated/mbb_zfixed.stl",
+                  "force1": "generated/mbb_force.stl"},
+    },
+    "bridge_deck": {
+        "title": "Bridge deck span",
+        "description": ("3D bridge span, 200x30x50 mm, fixed at both bottom "
+                        "ends with a distributed downward load over the top "
+                        "deck slab (kept solid via keepdom so the deck stays "
+                        "a continuous surface; the slab is 7.4 mm deep so it "
+                        "holds one element row at every mesh_control >= 24). "
+                        "35% volume (the kept deck row is 17-33% of the "
+                        "domain), SIMP + OC. "
+                        "Classic result: an arch/truss-like lattice of "
+                        "members below the deck carrying load to the two "
+                        "supports."),
+        "config_kwargs": dict(
+            domain="generated/bridge_domain.stl",
+            forces=["generated/bridge_deck_slab.stl"],
+            # volfrac 0.2 -> 0.35 (2026-10-02): the deck keep region is now
+            # captured at every mesh_control >= 24 and is one element row,
+            # 17-33 % of the domain, so 0.2 would be infeasible
+            mesh_control=70, volfrac=0.35, fixed="generated/bridge_fixed.stl",
+            keepdom="generated/bridge_deck_slab.stl",
+            fmagy=[-1000.0], youngs_modulus=210e9, method="SIMP"),
+        "category": "truss-like",
+        "files": {"domain": "generated/bridge_domain.stl",
+                  "fixed": "generated/bridge_fixed.stl",
+                  "force1": "generated/bridge_deck_slab.stl",
+                  "keepdom": "generated/bridge_deck_slab.stl"},
+    },
+    "torsion_bracket": {
+        "title": "Torsion bracket (two load cases)",
+        "description": ("3D bracket, 60x30x30 mm, fixed at the x=0 face "
+                        "with two load cases: a centred bending load at the "
+                        "free end, and an off-axis (lever-arm) load at a "
+                        "corner of the free end approximating a torsional "
+                        "moment about the bracket's long axis. 25% volume, "
+                        "SIMP + OC. Classic result: a twisted, closed-tube-"
+                        "like cross-section resisting both bending and "
+                        "torsion."),
+        "config_kwargs": dict(
+            domain="generated/torsion_domain.stl",
+            forces=["generated/torsion_force_bend.stl",
+                    "generated/torsion_force_torque.stl"],
+            mesh_control=28, volfrac=0.25, fixed="generated/torsion_fixed.stl",
+            fmagy=[-1000.0, 0.0], fmagz=[0.0, 1000.0],
+            youngs_modulus=210e9, method="SIMP"),
+        "category": "advanced",
+        "files": {"domain": "generated/torsion_domain.stl",
+                  "fixed": "generated/torsion_fixed.stl",
+                  "force1": "generated/torsion_force_bend.stl",
+                  "force2": "generated/torsion_force_torque.stl"},
+    },
+    "l_bracket": {
+        "title": "L-bracket",
+        "description": ("Classic L-shaped bracket, 100x100x15 mm (a 100x100 "
+                        "outer square minus a 65x65 corner notch), fixed at "
+                        "the top of the vertical arm with a 1000 N downward "
+                        "point load at the tip of the horizontal arm. 30% "
+                        "volume, SIMP + OC. Classic result: material "
+                        "concentrates along the two arms with a diagonal "
+                        "strut bridging the re-entrant (concave) corner to "
+                        "relieve its stress concentration."),
+        "config_kwargs": dict(
+            domain="generated/L_domain.stl", forces=["generated/L_force.stl"],
+            mesh_control=45, volfrac=0.3, fixed="generated/L_fixed.stl",
+            fmagy=[-1000.0], youngs_modulus=210e9, method="SIMP"),
+        "category": "advanced",
+        "files": {"domain": "generated/L_domain.stl",
+                  "fixed": "generated/L_fixed.stl",
+                  "force1": "generated/L_force.stl"},
+    },
+    "multi_load_beam": {
+        "title": "Multi-load-case beam",
+        "description": ("Simply supported 3D beam, 120x20x20 mm, fixed at "
+                        "both bottom ends, with 3 load cases (downward point "
+                        "loads at x=30, 60 and 90 mm along the top, one per "
+                        "case) for a design robust to load-position "
+                        "uncertainty. 30% volume, SIMP + OC. Classic result: "
+                        "a denser, more truss-like lattice than a single-"
+                        "load-case beam, since it must perform reasonably "
+                        "under each load independently."),
+        "config_kwargs": dict(
+            domain="generated/multiload_domain.stl",
+            forces=["generated/multiload_force_a.stl",
+                    "generated/multiload_force_b.stl",
+                    "generated/multiload_force_c.stl"],
+            mesh_control=60, volfrac=0.3, fixed="generated/multiload_fixed.stl",
+            fmagy=[-1000.0] * 3, youngs_modulus=210e9, method="SIMP"),
+        "category": "advanced",
+        "files": {"domain": "generated/multiload_domain.stl",
+                  "fixed": "generated/multiload_fixed.stl",
+                  "force1": "generated/multiload_force_a.stl",
+                  "force2": "generated/multiload_force_b.stl",
+                  "force3": "generated/multiload_force_c.stl"},
+    },
+}
+
+_PATH_KEYS = ("domain", "fixed", "xfixed", "yfixed", "zfixed", "keepdom")
+
+
+def example_config(name, stl_dir=None, **overrides):
+    """FreeTOConfig for README example ``name`` with absolute STL paths."""
+    from .core import FreeTOConfig
+    d = stl_dir or STL_DIR
+    kw = dict(EXAMPLES[name]["config_kwargs"])
+    for k in _PATH_KEYS:
+        if kw.get(k):
+            kw[k] = os.path.join(d, kw[k])
+    kw["forces"] = [os.path.join(d, f) for f in kw["forces"]]
+    kw.update(overrides)
+    return FreeTOConfig(**kw)

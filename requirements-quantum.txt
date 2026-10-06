@@ -1,0 +1,16 @@
+# OPTIONAL extras for the QUBO / quantum design update (freeto.quantum).
+# Nothing here is required: the built-in backends (exact, sa, tabu, greedy,
+# qaoa state-vector simulator) are pure numpy.  Install only what you need:
+#
+#   pip install -r requirements-quantum.txt
+#
+# D-Wave Ocean: dimod, dwave-samplers (local C++ SA/tabu -> backends
+# dwave_sa, dwave_tabu), dwave-system (DWaveSampler/EmbeddingComposite and
+# LeapHybridSampler -> dwave_qpu, dwave_hybrid; need DWAVE_API_TOKEN).
+dwave-ocean-sdk>=7
+# Qiskit: the QAOA circuit on AerSimulator (qiskit_aer) or IBM Quantum
+# hardware (ibm; needs QISKIT_IBM_TOKEN, optional QISKIT_IBM_INSTANCE,
+# QISKIT_IBM_BACKEND, QISKIT_IBM_CHANNEL).
+qiskit>=1.2
+qiskit-aer>=0.15
+qiskit-ibm-runtime>=0.30

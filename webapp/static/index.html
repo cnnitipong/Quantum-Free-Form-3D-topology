@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FreeTO-Python</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="/static/css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "/static/vendor/three/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/static/vendor/three/OrbitControls.js",
+    "three/addons/loaders/STLLoader.js": "/static/vendor/three/STLLoader.js"
+  }
+}
+</script>
+</head>
+<body>
+<header id="app-header">
+  <div class="brand">
+    <span class="brand-title">FreeTO<span class="accent">-Python</span></span>
+    <span id="core-badge" class="badge" title="Which numerical core is active">core: …</span>
+  </div>
+  <div id="status-bar" class="status-bar">
+    <span id="status-mesh">mesh —</span>
+    <span id="status-elements">elements —</span>
+    <span id="status-dofs">DOFs —</span>
+    <span id="status-solver">solver —</span>
+    <span id="status-itertime">iter time —</span>
+    <span id="status-qubo" class="status-qubo" hidden></span>
+    <span id="status-audit" class="status-audit" hidden title="Live connectivity of the binary design (QUBO runs) / final physics check"></span>
+  </div>
+  <button id="theme-toggle" class="icon-btn" title="Toggle light/dark theme">◐</button>
+</header>
+
+<div id="core-banner" class="core-banner" hidden></div>
+
+<nav id="tab-bar" class="tab-bar">
+  <button class="tab-btn active" data-tab="setup" type="button">Setup</button>
+  <button class="tab-btn" data-tab="truss" type="button">Truss</button>
+  <button class="tab-btn" data-tab="study" type="button">Study</button>
+</nav>
+
+<div id="tab-content">
+
+<main id="app-main" class="tab-view active" data-tab-view="setup">
+  <section id="left-panel">
+    <div class="panel-scroll">
+
+      <fieldset class="card">
+        <legend>Example problems</legend>
+        <div class="row">
+          <select id="example-select">
+            <option value="">Choose an example…</option>
+          </select>
+          <button id="example-load-btn" class="btn">Load</button>
+        </div>
+        <p id="example-desc" class="muted small"></p>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Input files</legend>
+        <div id="dropzone" class="dropzone">
+          Drag &amp; drop STL files here, or
+          <label class="file-pick">
+            browse<input id="file-input" type="file" accept=".stl,.STL" multiple hidden />
+          </label>
+        </div>
+        <div id="file-list" class="file-list"></div>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Load cases</legend>
+        <table id="load-table" class="load-table">
+          <thead>
+            <tr><th></th><th>File</th><th>Fx (N)</th><th>Fy (N)</th><th>Fz (N)</th><th></th></tr>
+          </thead>
+          <tbody id="load-table-body"></tbody>
+        </table>
+        <button id="add-load-btn" class="btn small">+ Add load case</button>
+        <p class="muted small">Rows may reuse the same file (e.g. one STL used as force1 and force2).</p>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Parameters</legend>
+        <div class="grid2">
+          <label>MeshControl<input id="p-mesh_control" type="number" min="4" step="1" value="80"></label>
+          <label>volfrac<input id="p-volfrac" type="number" min="0.01" max="0.99" step="0.01" value="0.3"></label>
+          <label>Young's modulus (Pa)<input id="p-youngs_modulus" type="number" step="any" value="1"></label>
+          <label>Poisson ratio<input id="p-poisson_ratio" type="number" min="0" max="0.49" step="0.01" value="0.3"></label>
+          <label>Method
+            <select id="p-method"><option>SIMP</option><option>SEMDOT</option></select>
+          </label>
+          <label>Optimizer
+            <select id="p-optimizer">
+              <option>OC</option><option>MMA</option>
+              <option value="QUBO">QUBO (quantum)</option>
+            </select>
+          </label>
+          <label>Penalty<input id="p-penal" type="number" min="1" step="0.1" value="3"></label>
+          <label>Filter radius<input id="p-rmin" type="number" min="0.1" step="0.1" value="1.5"></label>
+          <label>Load type
+            <select id="p-loadtype"><option>distributed</option><option>point</option></select>
+          </label>
+          <label>Max iterations<input id="p-max_iter" type="number" min="1" step="1" value="200"></label>
+          <label>Solver
+            <select id="p-solver">
+              <option>auto</option><option>cholmod</option><option>pardiso</option><option>superlu</option><option>amg</option>
+            </select>
+          </label>
+        </div>
+        <div class="row checks">
+          <label><input id="p-keep_bc" type="checkbox" checked> keep BC</label>
+          <label><input id="p-keep_bcx" type="checkbox"> keep BCx</label>
+          <label><input id="p-keep_bcy" type="checkbox"> keep BCy</label>
+          <label><input id="p-keep_bcz" type="checkbox"> keep BCz</label>
+          <label class="inline" title="After the run, check the design physically (freeto/audit.py, docs/PHYSICS_AUDIT.md): supports and loads on solid material, one grounded body (no floating pieces), volume target. The result appears in the 'Physics check' card."><input id="p-audit" type="checkbox" checked> physics check after run</label>
+          <label class="inline" title="After the run, project the final filtered field to a crisp 0/1 design at the target volume fraction and solve once (freeto/evaluate.py). This is the common yardstick for comparing OC / MMA / QUBO designs; the native (end-of-run) compliance depends on each optimizer's own projection and is not comparable across optimizers. Costs one extra FE solve."><input id="eval_crisp" type="checkbox" checked> report crisp compliance (comparable across optimizers)</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="card" id="quantum-settings-card" hidden>
+        <legend>Quantum settings</legend>
+        <p id="quantum-unavailable-msg" class="muted small" hidden></p>
+        <div id="quantum-settings-body">
+          <div class="grid2">
+            <label title="Which solver actually finds each QUBO's minimum-energy assignment. 'auto' picks exact for tiny free sets, else simulated annealing. Cloud backends (dwave_*, ibm) need the optional SDK and a token; unavailable ones are disabled here with a hint.">
+              Backend
+              <select id="qubo-backend"><option value="auto">auto</option></select>
+            </label>
+            <label title="How the second-order (coupling) term of the QUBO is built. auto picks block with a direct solver, diag with AMG. none = first-order only (the BESO/sorting control).">
+              Hessian mode
+              <select id="qubo-hessian">
+                <option value="auto">auto</option>
+                <option value="block">block (exact, per-block)</option>
+                <option value="diag">diag (cheap, sparse)</option>
+                <option value="none">none (sorting/BESO control)</option>
+              </select>
+            </label>
+            <label title="How the volume constraint is enforced. bisection = exact volume via a λ search (default, cheap backends). penalty = fixed λ from OC + a quadratic penalty + greedy repair (use for expensive backends: QPU, QAOA).">
+              Volume handling
+              <select id="qubo-volume">
+                <option value="bisection">bisection (exact)</option>
+                <option value="penalty">penalty (+ repair)</option>
+              </select>
+            </label>
+            <label title="Fraction of active elements that stay 'free' (solvable) each iteration: the grey boundary band plus the most marginal solid/void candidates. Smaller = smaller QUBOs, more iterations to converge.">
+              Frontier fraction
+              <input id="qubo-frontier_fraction" type="number" min="0.01" max="1" step="0.01" value="0.25">
+            </label>
+            <label title="Block size for the block Gauss–Seidel sweep, for backends with limited capacity (QAOA/qiskit ≈ 14, exact ≈ 20, D-Wave QPU ≈ 80). Leave blank for the backend's own default (SA/tabu solve the whole free set at once).">
+              Block size
+              <input id="qubo-block_size" type="number" min="1" step="1" placeholder="auto">
+            </label>
+            <label title="Number of block Gauss–Seidel sweeps over all blocks per design-update iteration.">
+              Sweeps
+              <input id="qubo-sweeps" type="number" min="1" step="1" value="2">
+            </label>
+            <label title="Reads / replicas for stochastic backends (sa, tabu, dwave_*). Leave blank for the backend's own default.">
+              SA / tabu reads
+              <input id="qubo-num_reads" type="number" min="1" step="1" placeholder="auto">
+            </label>
+            <label title="QAOA circuit depth p. Higher p can reach a better approximation ratio but costs more classical-optimizer evaluations (minutes at n≈20); p=3 is a reasonable default.">
+              QAOA layers (p)
+              <input id="qubo-qaoa_p" type="number" min="1" step="1" value="3">
+            </label>
+            <label title="Number of samples drawn from the final QAOA state to pick the reported bitstring.">
+              QAOA shots
+              <input id="qubo-qaoa_shots" type="number" min="1" step="1" value="1000">
+            </label>
+            <label title="RNG seed for stochastic backends (sa, tabu, QAOA sampling). Leave blank for a random seed.">
+              Seed
+              <input id="qubo-seed" type="number" step="1" placeholder="random">
+            </label>
+          </div>
+          <details id="quantum-advanced-details">
+            <summary class="muted small">Advanced</summary>
+            <div class="grid2">
+              <label title="Penalty weight λ_q for volume='penalty', in units of max|dc|/v_max². Leave blank for the backend default (2.0).">
+                λ_q (volume penalty)
+                <input id="qubo-lambda_q" type="number" step="any" placeholder="auto">
+              </label>
+              <label title="Perimeter / anti-checkerboard regulariser weight γ, in units of the mean |g| of the solid elements. 0 (the core default) disables it; the study (F5) shows γ>0 worsens the crisp result, so only raise it deliberately.">
+                γ (perimeter weight)
+                <input id="qubo-gamma" type="number" min="0" step="0.01" placeholder="0 (default)">
+              </label>
+              <label title="Hamming move-penalty μ against the previous binary design. 0 by default — the free-set/frontier selection already provides the trust region.">
+                Move penalty (μ)
+                <input id="qubo-move_penalty" type="number" min="0" step="0.01" value="0">
+              </label>
+              <label title="How free elements are grouped into blocks: 'morton' = spatially compact (Z-order curve, better coupling capture); 'rank' = grouped by sensitivity rank (cheaper, weaker coupling capture).">
+                Block grouping
+                <select id="qubo-blocks">
+                  <option value="morton">morton (spatial)</option>
+                  <option value="rank">rank (sensitivity)</option>
+                </select>
+              </label>
+              <label title="Initial design: 'solid' starts from all-solid with a BESO-like evolutionary volume schedule; 'oc' runs a few OC warm-up iterations first, then thresholds to the target volume.">
+                Init
+                <select id="qubo-init">
+                  <option value="solid">solid (BESO schedule)</option>
+                  <option value="oc">oc (warm start)</option>
+                </select>
+              </label>
+              <label title="Evolutionary volume ratio removed per iteration when init='solid'.">
+                ER (volume ratio)
+                <input id="qubo-er" type="number" min="0" max="1" step="0.01" value="0.05">
+              </label>
+              <label title="Number of OC warm-up iterations when init='oc'.">
+                OC warm-up iters
+                <input id="qubo-n_warm" type="number" min="0" step="1" value="10">
+              </label>
+              <label title="Stop after this many iterations without compliance improvement once the volume target has been reached (best design is kept).">
+                Patience
+                <input id="qubo-patience" type="number" min="1" step="1" value="8">
+              </label>
+              <label title="QAOA angle initialisation: 'linear_ramp' (TQA-like) or 'interp' (extend the previous depth's optimum by interpolation).">
+                QAOA angle init
+                <select id="qubo-qaoa_init">
+                  <option value="linear_ramp">linear_ramp</option>
+                  <option value="interp">interp</option>
+                </select>
+              </label>
+              <label title="Time limit in seconds for dwave_hybrid (minimum 3s). Ignored by other backends.">
+                Hybrid time limit (s)
+                <input id="qubo-time_limit" type="number" min="3" step="1" placeholder="auto">
+              </label>
+              <label title="Modulus model of the QUBO. beso (default): exact secant expansion at solid elements, filter-driven additions. secant: E = Emin + rho (E0 - Emin) everywhere. simp: design-literal Taylor model in the SIMP density (unstable for 0/1 moves, kept for the record).">
+                Interpolation model
+                <select id="qubo-interp">
+                  <option value="beso">beso (default)</option>
+                  <option value="secant">secant</option>
+                  <option value="simp">simp (unstable)</option>
+                </select>
+              </label>
+              <label title="Trust region: at most this fraction of the elements may flip in one iteration (the most beneficial flips are kept). Adapts down towards the minimum as the design converges. Core default 0.25; 1 = no limit.">
+                Move limit
+                <input id="qubo-move_limit" type="number" min="0.001" max="1" step="0.01" placeholder="0.25 (default)">
+              </label>
+              <label title="Smallest value the adaptive move limit may shrink to. Core default 0.02.">
+                Move limit (min)
+                <input id="qubo-move_limit_min" type="number" min="0.001" max="1" step="0.01" placeholder="0.02 (default)">
+              </label>
+              <label title="Accept-if-improves guard, tolerance while the volume is still above the target (relative compliance increase that is still accepted). Core default 0.5.">
+                Guard tol (above target)
+                <input id="qubo-guard_tol" type="number" min="0" step="0.05" placeholder="0.5 (default)">
+              </label>
+              <label title="Accept-if-improves guard, tolerance once the volume target is reached (relative compliance increase that is still accepted). Core default 0.25.">
+                Guard tol (at target)
+                <input id="qubo-guard_tol_target" type="number" min="0" step="0.05" placeholder="0.25 (default)">
+              </label>
+              <label title="Number of times a rejected update is retried with a halved move limit before the previous design is kept. Core default 4.">
+                Max rejects
+                <input id="qubo-max_rejects" type="number" min="0" step="1" placeholder="4 (default)">
+              </label>
+            </div>
+            <div class="row checks">
+              <label class="inline"><input id="qubo-verify_exact" type="checkbox"> verify against exact (n≤20 blocks; slower, for the study)</label>
+              <label class="inline" title="Keep the elements flagged as load / support regions solid (they are protected from removal). On by default in the core."><input id="qubo-protect_loads" type="checkbox" checked> protect load regions</label>
+              <label class="inline" title="Accept-if-improves guard: a design update whose compliance rises by more than the tolerances below is rejected and retried with a smaller move limit. On by default in the core."><input id="qubo-guard" type="checkbox" checked> accept-if-improves guard</label>
+              <label class="inline" title="Run a classical bit-flip polish on the best QAOA bitstring (qaoa backend only). On by default; switch off to see the raw QAOA sample quality."><input id="qubo-qaoa_polish" type="checkbox" checked> QAOA polish</label>
+              <label class="inline" title="Legacy metric: compliance of the 0/1-thresholded final design without smoothing. The study abandoned it in favour of the crisp evaluation; kept for comparison."><input id="eval_binary" type="checkbox"> also report binary-thresholded compliance</label>
+            </div>
+          </details>
+        </div>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Symmetry planes (max 3)</legend>
+        <div id="symmetry-rows"></div>
+        <button id="add-symmetry-btn" class="btn small">+ Add symmetry plane</button>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Run</legend>
+        <div class="row">
+          <button id="run-btn" class="btn primary">Run</button>
+          <button id="stop-btn" class="btn danger" disabled>Stop</button>
+        </div>
+        <div id="run-message" class="muted small"></div>
+        <div class="row">
+          <button id="download-stl-btn" class="btn" disabled>Download STL</button>
+          <button id="download-npz-btn" class="btn" disabled>Download NPZ</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="card" id="audit-card" hidden>
+        <legend>Physics check</legend>
+        <div class="audit-head">
+          <span id="audit-pill" class="pill pill-na">—</span>
+          <span id="audit-summary" class="muted small"></span>
+        </div>
+        <p id="audit-error" class="muted small error" hidden></p>
+        <div class="table-scroll">
+          <table id="audit-checks-table" class="results-table audit-table">
+            <thead><tr><th>check</th><th>pass</th><th>value (detail below)</th></tr></thead>
+            <tbody id="audit-checks-body"></tbody>
+          </table>
+        </div>
+        <details id="audit-components-details" class="audit-details">
+          <summary class="muted small">Components <span id="audit-components-count"></span></summary>
+          <div class="table-scroll">
+            <table class="results-table audit-table">
+              <thead><tr><th>#</th><th>elements</th><th>grounded</th><th>has load</th><th>bbox (mm)</th></tr></thead>
+              <tbody id="audit-components-body"></tbody>
+            </table>
+          </div>
+        </details>
+        <a id="audit-img-link" class="audit-img-link" href="#" hidden title="Click to enlarge">
+          <img id="audit-img" alt="Physics check overlay: crisp design, density slice, component map" />
+        </a>
+        <p id="audit-img-msg" class="muted small"></p>
+        <div class="row">
+          <button id="audit-download-json-btn" class="btn small" type="button">Download audit JSON</button>
+          <a id="audit-download-png" class="btn small" href="#" download hidden>Download overlay PNG</a>
+          <button id="audit-rerun-btn" class="btn small" type="button" title="Recompute the audit of this job">Re-run audit</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="card" id="audit-any-card">
+        <legend>Audit any result</legend>
+        <p class="muted small" style="margin-top:0">Run the physics check on a finished job from this server session
+          (e.g. a job started with the check off, or an earlier run).</p>
+        <div class="row">
+          <select id="audit-job-select" style="flex:1; min-width:0"><option value="">Select a finished job…</option></select>
+          <button id="audit-job-refresh-btn" class="btn small" type="button" title="Refresh the job list">&#8635;</button>
+          <button id="audit-job-run-btn" class="btn small primary" type="button">Audit</button>
+        </div>
+        <div id="audit-any-message" class="muted small"></div>
+      </fieldset>
+
+    </div>
+  </section>
+
+  <section id="right-panel">
+    <div id="viewport-container">
+      <div id="viewport-toolbar">
+        <label class="chk"><input id="toggle-inputs" type="checkbox" checked> show inputs</label>
+        <label class="chk"><input id="toggle-design" type="checkbox" checked> show design</label>
+        <label class="chk"><input id="toggle-axes" type="checkbox" checked> axes</label>
+        <button id="fit-view-btn" class="btn small">Fit view</button>
+      </div>
+      <div id="viewport"></div>
+      <div id="viewport-legend" class="legend">
+        <span><i class="sw sw-domain"></i>domain</span>
+        <span><i class="sw sw-fixed"></i>fixed</span>
+        <span><i class="sw sw-xfixed"></i>x-fixed</span>
+        <span><i class="sw sw-yfixed"></i>y-fixed</span>
+        <span><i class="sw sw-zfixed"></i>z-fixed</span>
+        <span><i class="sw sw-load"></i>load</span>
+        <span><i class="sw sw-keep"></i>keep</span>
+      </div>
+    </div>
+    <div id="lower-panels">
+      <div id="chart-panel" class="card">
+        <canvas id="convergence-chart"></canvas>
+      </div>
+      <div id="log-panel" class="card">
+        <div id="log-output"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<main id="truss-main" class="tab-view" data-tab-view="truss">
+  <section id="truss-left-panel" class="side-panel">
+    <div class="panel-scroll">
+      <fieldset class="card" id="truss-unavailable-card" hidden>
+        <legend>Truss module unavailable</legend>
+        <p id="truss-unavailable-msg" class="muted small"></p>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Benchmark</legend>
+        <div class="row">
+          <select id="truss-benchmark-select"><option value="">Choose a benchmark…</option></select>
+        </div>
+        <p id="truss-benchmark-desc" class="muted small"></p>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Method</legend>
+        <label>Method
+          <select id="truss-method-select">
+            <option value="exact" title="Enumerate all 2^M bar masks; only available when the benchmark has ≤ 22 bars.">exact (enumeration, n ≤ 22)</option>
+            <option value="oc" title="Continuous optimality-criteria on bar areas (no rounding).">oc (continuous areas)</option>
+            <option value="oc_round" title="OC continuous areas, then keep the largest areas until the volume budget is met.">oc_round (OC + keep-largest rounding)</option>
+            <option value="oc_qubo" title="OC continuous optimum, then a one-shot quadratic QUBO rounding at that point.">oc_qubo (OC + QUBO rounding)</option>
+            <option value="sort" title="First-order sensitivity sorting / BESO — the classical control, no QUBO solver at all.">sort (BESO / sorting control)</option>
+            <option value="qubo" title="Iterative QUBO design update (same machinery as the continuum optimizer) on the bar areas.">qubo (iterative QUBO, backend below)</option>
+          </select>
+        </label>
+        <div id="truss-backend-row" class="row" hidden>
+          <label style="flex:1">Backend
+            <select id="truss-backend-select"></select>
+          </label>
+        </div>
+        <label title="RNG seed for stochastic methods/backends. Leave blank for a random seed.">Seed
+          <input id="truss-seed" type="number" step="1" placeholder="random">
+        </label>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Run</legend>
+        <div class="row">
+          <button id="truss-run-btn" class="btn primary">Run</button>
+          <button id="truss-stop-btn" class="btn danger" disabled>Stop</button>
+        </div>
+        <div id="truss-run-message" class="muted small"></div>
+      </fieldset>
+    </div>
+  </section>
+
+  <section id="truss-right-panel">
+    <div id="truss-canvas-container">
+      <canvas id="truss-canvas"></canvas>
+      <div id="truss-stats" class="legend"></div>
+    </div>
+    <div id="truss-results-panel" class="card">
+      <strong class="panel-title">Runs this session</strong>
+      <div class="table-scroll">
+        <table id="truss-results-table" class="results-table">
+          <thead>
+            <tr>
+              <th>Benchmark</th><th>Method</th><th>Backend</th><th>Compliance</th>
+              <th>Vol. frac</th><th>Gap to exact</th><th>Feasible</th><th>Time (s)</th>
+            </tr>
+          </thead>
+          <tbody id="truss-results-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<main id="study-main" class="tab-view" data-tab-view="study">
+  <section id="study-left-panel" class="side-panel">
+    <div class="panel-scroll">
+      <fieldset class="card" id="study-unavailable-card" hidden>
+        <legend>Study module unavailable</legend>
+        <p id="study-unavailable-msg" class="muted small"></p>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Suite</legend>
+        <label title="Bundled run matrices from freeto.study (docs/QUANTUM_API.md §4). 'smoke' is fastest (a couple of minutes); 'full' can take a long time.">
+          Suite
+          <select id="study-suite-select">
+            <option value="smoke">smoke (fastest, ~2 min)</option>
+            <option value="quick">quick</option>
+            <option value="full">full (slow — many runs)</option>
+            <option value="custom">custom subset…</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset class="card" id="study-custom-card" hidden>
+        <legend>Custom study</legend>
+        <label>Kind
+          <select id="study-custom-kind">
+            <option value="continuum">continuum: problems &times; methods &times; seeds</option>
+            <option value="truss">truss: benchmarks &times; QUBO backends</option>
+          </select>
+        </label>
+        <div id="study-custom-continuum">
+          <div class="muted small" style="margin-top:8px;">Problems <span class="muted">(default mesh in brackets)</span></div>
+          <div id="study-cproblems-list" class="check-list"></div>
+          <div class="muted small" style="margin-top:8px;">Methods</div>
+          <div id="study-cmethods-list" class="check-list"></div>
+          <div class="grid2" style="margin-top:8px;">
+            <label title="Comma-separated RNG seeds for the stochastic (QUBO) methods; MMA / OC / BESO-sort are deterministic and run once.">
+              Seeds
+              <input id="study-cseeds" type="text" value="0">
+            </label>
+            <label title="Override MeshControl for every problem (blank = each problem's quick-suite size). Smaller = faster, but too coarse a mesh leaves the load region without grid nodes (about 20 is the minimum for these problems).">
+              Mesh override
+              <input id="study-cmesh" type="number" min="4" step="1" placeholder="per problem">
+            </label>
+            <label title="Iterations per run.">
+              Max iterations
+              <input id="study-cmaxiter" type="number" min="1" step="1" value="100">
+            </label>
+            <label class="inline" style="flex-direction:row;align-items:center;gap:6px;align-self:end"
+                   title="Gaps are relative to MMA's crisp compliance on the same problem; add MMA automatically if it is not ticked.">
+              <input id="study-cbaseline" type="checkbox" checked> include MMA baseline
+            </label>
+          </div>
+          <p id="study-cestimate" class="muted small"></p>
+        </div>
+        <div id="study-custom-truss" hidden>
+          <p class="muted small">Truss problems &times; backends, run with the iterative QUBO method.</p>
+          <div class="muted small" style="margin-top:4px;">Problems</div>
+          <div id="study-problems-list" class="check-list"></div>
+          <div class="muted small" style="margin-top:8px;">Backends</div>
+          <div id="study-backends-list" class="check-list"></div>
+        </div>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Run</legend>
+        <div class="row">
+          <button id="study-run-btn" class="btn primary">Run study</button>
+          <button id="study-stop-btn" class="btn danger" disabled>Stop</button>
+        </div>
+        <div id="study-run-message" class="muted small"></div>
+        <div id="study-progress" class="muted small"></div>
+      </fieldset>
+
+      <fieldset class="card study-note" id="study-rerun-note">
+        <legend>Re-run with corrections</legend>
+        <p class="small" style="margin-top:0">QUBO continuum rows now use the <b>connectivity repair</b>
+          (<code>QUBOOptions.connectivity</code>, on by default): after each update, floating pieces are removed
+          or re-attached to the supports, so the binary design stays one grounded body with every load on solid.
+          Results from <i>before</i> the fix (e.g. an old <code>results/quick</code>; marked <i>pre-fix</i> below) may
+          contain floating material &mdash; on the bridge deck a crisp compliance orders of magnitude too high.
+          Re-run, then read the <b>audit</b> columns: a row that fails the physics check is labelled
+          <b>physically invalid</b>.</p>
+        <div class="row">
+          <button id="study-rerun-quick-btn" class="btn small" type="button">Select the quick suite</button>
+        </div>
+        <p class="muted small">CLI: <code>python -m freeto.study --suite quick --out results/quick --threads 1</code></p>
+      </fieldset>
+
+      <fieldset class="card" id="study-past-card">
+        <legend>Past studies</legend>
+        <p class="muted small" style="margin-top:0">Finished study outputs found in the work directory
+          (<code>&lt;workdir&gt;/study/</code>) and in <code>results/</code> (CLI runs) &mdash; they survive a
+          server restart.</p>
+        <div class="row"><button id="study-past-refresh-btn" class="btn small" type="button">Refresh list</button></div>
+        <div id="study-past-list" class="past-list"></div>
+      </fieldset>
+    </div>
+  </section>
+
+  <section id="study-right-panel">
+    <div id="study-log-panel" class="card">
+      <strong class="panel-title">Log</strong>
+      <div id="study-log-output"></div>
+    </div>
+    <div id="study-figures-panel" class="card">
+      <strong class="panel-title">Figures</strong>
+      <div id="study-figures" class="figure-gallery"></div>
+    </div>
+    <div id="study-results-panel" class="card">
+      <div class="row" style="justify-content:space-between;">
+        <strong class="panel-title">Results</strong>
+        <span id="study-downloads"></span>
+      </div>
+      <div id="study-results-title" class="muted small"></div>
+      <div id="study-results-table-wrap" class="table-scroll"></div>
+      <details id="study-summary-details" class="audit-details" hidden>
+        <summary class="muted small">summary.md</summary>
+        <pre id="study-summary-md" class="summary-md"></pre>
+      </details>
+    </div>
+  </section>
+</main>
+
+</div><!-- #tab-content -->
+
+<div id="lightbox" class="lightbox" hidden>
+  <button id="lightbox-close" class="btn small" type="button" title="Close (Esc)">&times; close</button>
+  <img id="lightbox-img" alt="" />
+</div>
+
+<script src="/static/vendor/chartjs/chart.umd.min.js"></script>
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
