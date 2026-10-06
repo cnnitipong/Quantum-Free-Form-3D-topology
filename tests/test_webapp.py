@@ -343,11 +343,17 @@ class TestFrontendServed:
         assert '<option value="sa" selected>' in html
         assert '<option value="block" selected>' in html
 
-    def test_example_prefill_keeps_ui_optimizer(self, client):
-        """Examples do not prescribe an optimizer (prefill.optimizer is None), so loading
-        one keeps the UI's selection (QUBO by default)."""
+    def test_example_prefill_is_paper_qubo_sa(self, client):
+        """Loading a paper example sets the paper's QUBO-SA (block) run: optimizer QUBO,
+        backend sa, block Hessian, seed 0, the paper mesh (tests/test_webapp_paper.py
+        checks every field against the study)."""
         data = client.post("/api/examples/cantilever_beam/load").json()
-        assert data["prefill"]["optimizer"] is None
+        pre = data["prefill"]
+        if not data.get("paper", {}).get("available"):
+            pytest.skip("paper presets need the real core")
+        assert pre["optimizer"] == "QUBO"
+        assert (pre["qubo_backend"], pre["qubo_hessian"], pre["qubo_seed"]) == ("sa", "block", 0)
+        assert (pre["mesh_control"], pre["max_iter"], pre["eval_refined"]) == (36, 300, 2)
 
     def test_static_vendor_files_present(self, client):
         for path in (

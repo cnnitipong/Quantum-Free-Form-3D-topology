@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import queue
 import struct
 import threading
@@ -140,6 +141,9 @@ class Job:
                 # Scalar extras of a finished continuum run (crisp compliance,
                 # beta_final, ...), see _run_continuum.
                 "result_info": self.extra.get("result_info"),
+                # paper context of a continuum job (webapp.paper_presets.paper_comparison):
+                # matched paper run + its published values, MMA reference for the gap
+                "paper": self.extra.get("paper") if self.kind == "continuum" else None,
                 **self._audit_summary(),
             }
 
@@ -177,10 +181,13 @@ class JobManager:
 
     # -- public API ---------------------------------------------------
 
-    def submit(self, label: str, config_dict: dict, cfg: "FreeTOConfig", audit: bool = True) -> Job:
+    def submit(self, label: str, config_dict: dict, cfg: "FreeTOConfig", audit: bool = True,
+               paper: Optional[dict] = None) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job = Job(id=job_id, label=label, config_dict=config_dict, cfg=cfg, kind="continuum",
                   audit_enabled=bool(audit))
+        if paper is not None:
+            job.extra["paper"] = paper
         return self._enqueue(job)
 
     def submit_truss(self, label: str, config_dict: dict, *, benchmark_id: str, method: str,
@@ -363,7 +370,14 @@ class JobManager:
                     with job._field_lock:
                         job._last_field = field
 
-        result = run_freeto(job.cfg, callback=callback, stop_event=job.stop_event, log=log)
+        # Pin the BLAS / OpenMP / MKL (PARDISO) thread pools like the study does
+        # (freeto.study._ThreadPin, one thread by default): a binary design
+        # trajectory depends on the floating-point summation order, so the same
+        # inputs reproduce the study's result only with the same thread count.
+        with _thread_pin() as pin:
+            if pin is not None:
+                job.append_log(f"Threads: {_pin_text(pin)} (FREETO_THREADS, as the study: 1)")
+            result = run_freeto(job.cfg, callback=callback, stop_event=job.stop_event, log=log)
         job.result = result
         # Persist result files to disk BEFORE flipping the job to a
         # terminal status: a client polling status may act on "done"
@@ -382,6 +396,8 @@ class JobManager:
                 job.extra["continuum_extra"] = extra
             self._collect_audit(job)
             info = _result_info(extra)
+            info.update(_native_info(result, job.cfg))
+            _paper_gap(info, job.extra.get("paper"))
             job.extra["result_info"] = info or None
             crisp = ""
             if info.get("crisp_compliance") is not None:
@@ -392,6 +408,13 @@ class JobManager:
                 f"Done: compliance={result.comp:.4f} volfrac={result.finalvol:.4f} "
                 f"iterations={result.iterations} elapsed={result.elapsed:.1f}s" + crisp
             )
+            if info.get("refined_compliance") is not None:
+                txt = (f"Refined binary voxel evaluation (f={info.get('refined_f')}): "
+                       f"c={info['refined_compliance']:.6g} V={info.get('refined_volfrac'):.4f}")
+                if info.get("gap_refined") is not None:
+                    txt += (f" | gap to the paper's MMA reference "
+                            f"({info['gap_reference']:.6g}): {100 * info['gap_refined']:+.2f} %")
+                job.append_log(txt)
 
     # -- physics audit (docs/AUDIT_API.md) -----------------------------------
 
@@ -586,11 +609,33 @@ class JobManager:
             n_runs = len(results.get("records", []) or [])
         job.append_log(f"Study finished: {n_runs} runs." if n_runs is not None else "Study finished.")
 
+    def get_evaluated_stl(self, job: Job) -> Optional[bytes]:
+        """Binary STL of the evaluated (crisp) design of a finished continuum
+        job, built once and cached in the job directory."""
+        path = self.jobs_dir / job.id / "evaluated.stl"
+        with _EVAL_STL_LOCK:
+            if path.is_file() and path.stat().st_size > 84:
+                return path.read_bytes()
+            surf = evaluated_surface(job.result)
+            if surf is None:
+                return None
+            data = _mesh_to_binary_stl(*surf)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            except OSError:
+                pass
+            return data
+
     def _save_result(self, job: Job):
         if job.result is None:
             return
         job_dir = self.jobs_dir / job.id
         job_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            _save_fields(job_dir / "fields.npz", job.result)
+        except Exception as exc:  # noqa: BLE001
+            job.append_log(f"Warning: failed to write fields NPZ: {exc}")
         try:
             job.result.write_stl(str(job_dir / "result.stl"))
         except Exception as exc:  # noqa: BLE001
@@ -602,6 +647,112 @@ class JobManager:
 
 
 _AUDIT_FIG_LOCK = threading.Lock()
+_EVAL_STL_LOCK = threading.Lock()
+
+
+def _thread_pin():
+    """Context manager pinning the thread pools to FREETO_THREADS (default 1;
+    "0" or "none" = leave them alone) with the study's own helper."""
+    import contextlib
+    n = os.environ.get("FREETO_THREADS", "1").strip().lower()
+    if n in ("0", "none", ""):
+        return contextlib.nullcontext(None)
+    try:
+        from freeto.study import _ThreadPin
+    except Exception:  # noqa: BLE001 -- stub core / old core
+        return contextlib.nullcontext(None)
+    return _ThreadPin(int(n))
+
+
+def _pin_text(pin) -> str:
+    info = getattr(pin, "info", None) or {}
+    pools = ", ".join(f"{p.get('api')}={p.get('num_threads')}" for p in info.get("pools") or [])
+    return f"{info.get('requested')} per pool ({info.get('method')}" + (f": {pools})" if pools else ")")
+
+
+def _save_fields(path, res) -> None:
+    """Same layout as the study's fields/<run_id>.npz (freeto.study._save_fields):
+    full_pre (float32), grid, binary_design (uint8, QUBO / BESO), history_*."""
+    ex = getattr(res, "extra", None) or {}
+    fp = ex.get("full_pre")
+    si = getattr(res, "setup_info", None) or {}
+    arrs = {"full_pre": np.asarray(fp if fp is not None else [], dtype=np.float32),
+            "grid": np.array([si.get("nelx") or 0, si.get("nely") or 0, si.get("nelz") or 0],
+                             dtype=np.int64)}
+    if ex.get("binary_design") is not None:
+        arrs["binary_design"] = (np.asarray(ex["binary_design"]) > 0.5).astype(np.uint8)
+    for k, v in (getattr(res, "history", None) or {}).items():
+        arrs[f"history_{k}"] = np.asarray(v, dtype=np.float64)
+    np.savez_compressed(str(path), **arrs)
+
+
+NGRID = 4  # FreeTO fine-grid factor (freeto.core.NGRID)
+
+
+def evaluated_surface(res):
+    """(vertices, faces) of the evaluated binary design of a continuum result:
+    the final pre-smoothing field interpolated to the fine grid and projected
+    crisp at the target volume fraction (the crisp evaluation's threshold),
+    restricted to the active elements, lightly smoothed (Gaussian, 0.2 h) and
+    contoured at 0.5 -- the rendering of the paper's Fig. 5 -- then mirrored
+    like the STL output.  None if the result carries no evaluated field."""
+    ctx = getattr(res, "audit_ctx", None) or {}
+    full_pre = ctx.get("full_pre")
+    if full_pre is None:
+        return None
+    from scipy.ndimage import gaussian_filter
+    from freeto.evaluate import crisp_projection, fine_field
+    from freeto.mesh import matlab_to_xyz
+    from freeto.postprocess import FieldSnapshot, apply_symmetry
+    nelx, nely, nelz = int(ctx["nelx"]), int(ctx["nely"]), int(ctx["nelz"])
+    ele = np.asarray(ctx["ele"])
+    Hn, Hns = ctx["Hn"], ctx["Hns"]
+    extra = getattr(res, "extra", None) or {}
+    thr = extra.get("crisp_threshold")
+    if thr is None or not np.isfinite(thr):
+        target = float(extra.get("crisp_target") or ctx.get("volfrac"))
+        thr = crisp_projection(full_pre, Hn, Hns, nelx, nely, nelz, ele, target, NGRID)[1]
+    xg = fine_field(full_pre, Hn, Hns, nelx, nely, nelz, NGRID)
+    act = np.zeros(nelx * nely * nelz, dtype=bool)
+    act[ele] = True
+    act = act.reshape((nely, nelx, nelz), order="F")
+    win = np.zeros(xg.shape, dtype=bool)
+    for a in range(NGRID + 1):
+        for b in range(NGRID + 1):
+            for c in range(NGRID + 1):
+                win[a:a + NGRID * nely:NGRID, b:b + NGRID * nelx:NGRID,
+                    c:c + NGRID * nelz:NGRID] |= act
+    solid = (xg > float(thr)) & win
+    vol = gaussian_filter(solid.astype(np.float32), 0.8, mode="nearest")
+    h = float(ctx["h"])
+    fld = FieldSnapshot(np.ascontiguousarray(matlab_to_xyz(vol - 0.5)),
+                        np.asarray(ctx["origin"], dtype=float), np.full(3, h / NGRID))
+    cfg = getattr(res, "config", None)
+    for plane, direction in (getattr(cfg, "symmetry", None) or []):
+        fld = apply_symmetry(fld, plane, direction)
+    return surface_from_field(fld, smooth=False)
+
+
+def _native_info(res, cfg) -> dict:
+    """Native compliance / volume with the study record's semantics
+    (freeto.study._run_continuum): QUBO -- the returned design; OC / MMA -- the
+    compliance of the iterate entering the last iteration and its volume."""
+    hv = [float(v) for v in (getattr(res, "history", None) or {}).get("volfrac", [])]
+    opt = str(getattr(cfg, "optimizer", "OC")).upper()
+    v_nat = hv[-2] if (opt != "QUBO" and len(hv) >= 2) else float(res.finalvol)
+    out = {"native_compliance": float(res.comp), "native_volfrac": v_nat,
+           "iterations": int(res.iterations), "volfrac_target": float(getattr(cfg, "volfrac", 0))}
+    return {k: (v if not isinstance(v, float) or math.isfinite(v) else None)
+            for k, v in out.items()}
+
+
+def _paper_gap(info: dict, paper: Optional[dict]) -> None:
+    """Refined gap to the paper's MMA reference (same problem, f = 2 only)."""
+    ref = (paper or {}).get("gap_reference")
+    c = info.get("refined_compliance")
+    if ref and c is not None:
+        info["gap_reference"] = float(ref)
+        info["gap_refined"] = float(c) / float(ref) - 1.0
 
 
 def _json_safe(obj):
@@ -636,7 +787,9 @@ def _format_audit_log(aud: dict) -> str:
 
 _RESULT_INFO_KEYS = ("crisp_compliance", "crisp_volfrac", "crisp_target", "beta_final",
                      "compliance_returned_design", "returned_design", "binary_compliance",
-                     "binary_volfrac", "eval_errors")
+                     "binary_volfrac", "eval_errors", "refined_compliance", "refined_volfrac",
+                     "refined_f", "refined_threshold", "compliance_at_beta", "volfrac_at_beta",
+                     "eval_beta", "best_iteration", "mma_constraint", "mma_fval_final")
 
 
 def _result_info(extra) -> dict:
@@ -650,6 +803,8 @@ def _result_info(extra) -> dict:
             continue
         if isinstance(v, bool) or isinstance(v, str):
             out[k] = v
+        elif isinstance(v, (int, np.integer)):
+            out[k] = int(v)
         elif isinstance(v, (int, float)):
             out[k] = float(v) if math.isfinite(float(v)) else None
         elif isinstance(v, (dict, list)):

@@ -64,6 +64,13 @@
           <button id="example-load-btn" class="btn">Load</button>
         </div>
         <p id="example-desc" class="muted small"></p>
+        <div class="row" id="paper-row">
+          <label class="paper-method-label" title="The run of the manuscript whose settings the form holds (suite quick2 of freeto.study, docs/PAPER_SETTINGS.md). Changing it sets every parameter to that run's values; QUBO-SA (block) is the default.">Paper run
+            <select id="paper-method"><option value="QUBO-sa (block)">QUBO-SA (block Hessian)</option></select>
+          </label>
+          <button id="paper-reset-btn" class="btn small" type="button" title="Reset every parameter to the paper's value for this example and paper run (mesh, volume fraction, material, optimizer, QUBO options, seed 0, iteration cap 300, evaluation).">Paper settings</button>
+        </div>
+        <p id="paper-note" class="muted small">Paper settings (manuscript Table 1, suite quick2): MeshControl, volume fraction, E = 210 GPa, &nu; = 0.3, q = 3, r<sub>min</sub> = 1.5, cap 300 iterations, seed 0, refined binary voxel evaluation f = 2.</p>
       </fieldset>
 
       <fieldset class="card">
@@ -99,9 +106,9 @@
               <option value="MMA">MMA - method of moving asymptotes (classical)</option>
             </select>
           </label>
-          <label>MeshControl<input id="p-mesh_control" type="number" min="4" step="1" value="80"></label>
+          <label>MeshControl<input id="p-mesh_control" type="number" min="4" step="1" value="36"></label>
           <label>volfrac<input id="p-volfrac" type="number" min="0.01" max="0.99" step="0.01" value="0.3"></label>
-          <label>Young's modulus (Pa)<input id="p-youngs_modulus" type="number" step="any" value="1"></label>
+          <label>Young's modulus (Pa)<input id="p-youngs_modulus" type="number" step="any" value="210000000000"></label>
           <label>Poisson ratio<input id="p-poisson_ratio" type="number" min="0" max="0.49" step="0.01" value="0.3"></label>
           <label>Method
             <select id="p-method"><option>SIMP</option><option>SEMDOT</option></select>
@@ -111,7 +118,7 @@
           <label>Load type
             <select id="p-loadtype"><option>distributed</option><option>point</option></select>
           </label>
-          <label>Max iterations<input id="p-max_iter" type="number" min="1" step="1" value="200"></label>
+          <label>Max iterations<input id="p-max_iter" type="number" min="1" step="1" value="300"></label>
           <label>Solver
             <select id="p-solver">
               <option>auto</option><option>cholmod</option><option>pardiso</option><option>superlu</option><option>amg</option>
@@ -124,13 +131,31 @@
           <label><input id="p-keep_bcy" type="checkbox"> keep BCy</label>
           <label><input id="p-keep_bcz" type="checkbox"> keep BCz</label>
           <label class="inline" title="After the run, check the design physically (freeto/audit.py, docs/PHYSICS_AUDIT.md): supports and loads on solid material, one grounded body (no floating pieces), volume target. The result appears in the 'Physics check' card."><input id="p-audit" type="checkbox" checked> physics check after run</label>
-          <label class="inline" title="After the run, project the final filtered field to a crisp 0/1 design at the target volume fraction and solve once (freeto/evaluate.py). This is the common yardstick for comparing OC / MMA / QUBO designs; the native (end-of-run) compliance depends on each optimizer's own projection and is not comparable across optimizers. Costs one extra FE solve."><input id="eval_crisp" type="checkbox" checked> report crisp compliance (comparable across optimizers)</label>
+          <label class="inline" title="After the run, project the final filtered field to a crisp 0/1 design at the target volume fraction and solve once (freeto/evaluate.py). This is the element proxy of the paper; the native (end-of-run) compliance depends on each optimizer's own projection and is not comparable across optimizers. Costs one extra FE solve."><input id="eval_crisp" type="checkbox" checked> report crisp compliance (element proxy)</label>
+        </div>
+        <div class="grid2 eval-grid">
+          <label title="Refined binary voxel evaluation (the paper's headline metric): every active element is split into f&sup3; voxels, solid where the fine field exceeds the threshold that gives the target volume fraction, and solved once. The paper uses f = 2.">Refined evaluation f
+            <select id="p-eval_refined">
+              <option value="">off</option>
+              <option value="1">1</option>
+              <option value="2" selected>2 (paper)</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+          <label title="Also report the compliance of the final field re-smoothed at this Heaviside sharpness (common-beta comparison). The study uses 8.">Eval. beta<input id="p-eval_beta" type="number" min="0.1" step="0.5" value="8"></label>
+          <label title="MMA only. 'filtered' (paper): the volume constraint acts on the filtered densities, the same quantity every method controls. 'projected': FreeTO's original constraint on the projected densities.">MMA volume constraint
+            <select id="p-mma_constraint">
+              <option value="filtered" selected>filtered (paper)</option>
+              <option value="projected">projected (FreeTO)</option>
+            </select>
+          </label>
+          <label class="inline" title="MMA only. Stop by the change / grey-fraction tolerances only when the volume constraint holds within 1e-3 (paper); the iteration cap still ends the run."><input id="p-mma_feasible_stop" type="checkbox" checked> MMA: stop only when feasible</label>
         </div>
       </fieldset>
 
       <fieldset class="card" id="quantum-settings-card">
         <legend>QUBO design update</legend>
-        <p class="muted small qubo-intro">Defaults are the paper's QUBO-SA (block) settings: simulated annealing on the QUBO with the exact per-block Hessian. Its cost grows quickly with the mesh (the default cantilever at MeshControl 25 takes about a minute, at 36 about three). QAOA (state-vector simulator) stays selectable but is slow.</p>
+        <p class="muted small qubo-intro">Defaults are the paper's QUBO-SA (block) settings: simulated annealing on the QUBO with the exact per-block Hessian, seed 0. A run at the paper mesh takes a few minutes (cantilever, MeshControl 36: about 3 min on one core). QAOA (state-vector simulator) stays selectable but is slow.</p>
         <p id="quantum-unavailable-msg" class="muted small" hidden></p>
         <div id="quantum-settings-body">
           <div class="grid2">
@@ -144,6 +169,7 @@
                 <option value="auto">auto</option>
                 <option value="block" selected>block (exact)</option>
                 <option value="diag">diag (cheap)</option>
+                <option value="scalar">scalar (diagonal only, control)</option>
                 <option value="none">none (BESO control)</option>
               </select>
             </label>
@@ -178,9 +204,9 @@
               QAOA shots
               <input id="qubo-qaoa_shots" type="number" min="1" step="1" value="1000">
             </label>
-            <label title="RNG seed for stochastic backends (sa, tabu, QAOA sampling). Leave blank for a random seed.">
+            <label title="RNG seed for stochastic backends (sa, tabu, QAOA sampling). The paper's seed-0 runs use 0; leave blank for a random seed (not reproducible).">
               Seed
-              <input id="qubo-seed" type="number" step="1" placeholder="random">
+              <input id="qubo-seed" type="number" step="1" value="0" placeholder="random">
             </label>
           </div>
           <details id="quantum-advanced-details">
@@ -263,11 +289,16 @@
                 Max rejects
                 <input id="qubo-max_rejects" type="number" min="0" step="1" placeholder="4 (default)">
               </label>
+              <label title="Factor &kappa; multiplying the quadratic (Hessian) term. 1 in the paper's QUBO-SA runs; 3 is the 'Qx3' control.">
+                <span>Hessian scale (<span class="nocase">&kappa;</span>)</span>
+                <input id="qubo-hessian_scale" type="number" min="0" step="0.5" placeholder="1 (default)">
+              </label>
             </div>
             <div class="row checks">
               <label class="inline"><input id="qubo-verify_exact" type="checkbox"> verify against exact (n≤20 blocks; slower, for the study)</label>
               <label class="inline" title="Keep the elements flagged as load / support regions solid (they are protected from removal). On by default in the core."><input id="qubo-protect_loads" type="checkbox" checked> protect load regions</label>
               <label class="inline" title="Accept-if-improves guard: a design update whose compliance rises by more than the tolerances below is rejected and retried with a smaller move limit. On by default in the core."><input id="qubo-guard" type="checkbox" checked> accept-if-improves guard</label>
+              <label class="inline" title="Connectivity repair: floating material is reconnected along the cheapest path or deleted, and the added volume removed again. On in every paper run."><input id="qubo-connectivity" type="checkbox" checked> connectivity repair</label>
               <label class="inline" title="Run a classical bit-flip polish on the best QAOA bitstring (qaoa backend only). On by default; switch off to see the raw QAOA sample quality."><input id="qubo-qaoa_polish" type="checkbox" checked> QAOA polish</label>
               <label class="inline" title="Legacy metric: compliance of the 0/1-thresholded final design without smoothing. The study abandoned it in favour of the crisp evaluation; kept for comparison."><input id="eval_binary" type="checkbox"> also report binary-thresholded compliance</label>
             </div>
@@ -292,6 +323,15 @@
           <button id="download-stl-btn" class="btn" disabled>Download STL</button>
           <button id="download-npz-btn" class="btn" disabled>Download NPZ</button>
         </div>
+      </fieldset>
+
+      <fieldset class="card" id="result-card" hidden>
+        <legend>Result</legend>
+        <table class="results-table result-table">
+          <thead><tr><th></th><th>compliance c</th><th>volume V</th></tr></thead>
+          <tbody id="result-body"></tbody>
+        </table>
+        <p id="result-paper" class="muted small"></p>
       </fieldset>
 
       <fieldset class="card" id="audit-card" hidden>
@@ -347,6 +387,12 @@
       <div id="viewport-toolbar">
         <label class="chk"><input id="toggle-inputs" type="checkbox" checked> show inputs</label>
         <label class="chk"><input id="toggle-design" type="checkbox" checked> show design</label>
+        <label class="chk" title="Evaluated binary design: the crisp design at the target volume fraction behind the crisp / refined compliance, rendered as in the paper's Fig. 5. Smooth STL: the pipeline's smooth-edge output (Download STL).">view
+          <select id="design-view">
+            <option value="evaluated" selected>evaluated design (paper)</option>
+            <option value="smooth">smooth STL output</option>
+          </select>
+        </label>
         <label class="chk"><input id="toggle-axes" type="checkbox" checked> axes</label>
         <button id="fit-view-btn" class="btn small">Fit view</button>
       </div>

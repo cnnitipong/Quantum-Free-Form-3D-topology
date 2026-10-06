@@ -58,6 +58,7 @@ from webapp.core_loader import (
     unavailable_message,
 )
 from webapp.jobs import JobManager
+from webapp import paper_presets
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("freeto.webapp.server")
@@ -319,12 +320,45 @@ class JobCreateRequest(BaseModel):
     qubo_guard_tol: Optional[float] = None
     qubo_guard_tol_target: Optional[float] = None
     qubo_max_rejects: Optional[int] = None
+    # The remaining QUBOOptions fields (2026-10-06): every option is forwarded,
+    # so any study run (e.g. "QUBO-sa (block, Qx3)": hessian_scale = 3) can be
+    # reproduced from the web app (tests/test_webapp_paper.py checks the list).
+    qubo_qaoa_maxiter: Optional[int] = None
+    qubo_hessian_block_size: Optional[int] = None
+    qubo_hessian_max_rhs: Optional[int] = None
+    qubo_hessian_scale: Optional[float] = None
+    qubo_bisection_steps: Optional[int] = None
+    qubo_lambda_source: Optional[str] = None
+    qubo_free_set: Optional[str] = None
+    qubo_history_average: Optional[bool] = None
+    qubo_connectivity: Optional[bool] = None
+    qubo_diagnostics: Optional[bool] = None
+    qubo_backend_options: Optional[Dict[str, Any]] = None
     eval_binary: bool = False
     # Common crisp evaluation (FreeTOConfig.eval_crisp = True -> at the target
     # volfrac) for ANY optimizer; adds extra["crisp_compliance"] etc.
     eval_crisp: bool = False
     # Physics check (docs/AUDIT_API.md): run freeto.audit on the finished design.
     audit: bool = True
+    # Evaluation / MMA options of the study protocol (FreeTOConfig v2 fields;
+    # None = the core default). The paper runs use eval_beta 8, eval_refined 2
+    # (refined binary voxel evaluation), mma_constraint "filtered" and
+    # mma_feasible_stop true (docs/PAPER_SETTINGS.md).
+    eval_beta: Optional[float] = None
+    eval_refined: Optional[int] = None
+    mma_constraint: Optional[str] = None
+    mma_feasible_stop: Optional[bool] = None
+    init_perturb: Optional[float] = None
+    init_seed: Optional[int] = None
+    # Name of the example the form was loaded from (only used to compare the
+    # result with the paper's published values; the geometry comes from the ids).
+    example: Optional[str] = None
+
+
+#: QUBOOptions names with a "qubo_<name>" request field (all of them: see
+#: tests/test_webapp_paper.py::test_every_qubo_option_has_a_request_field)
+QUBO_REQUEST_FIELDS = tuple(n[len("qubo_"):] for n in JobCreateRequest.model_fields
+                            if n.startswith("qubo_"))
 
 
 class TrussRunRequest(BaseModel):
@@ -489,9 +523,23 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
                 # "paper" | "beam" | "truss-like" | "advanced" (freeto/examples.py);
                 # tolerate an older core without the key.
                 "category": ex.get("category", "paper"),
+                # one of the five continuum examples of the QFF-3D manuscript
+                # (Table 1): listed first, loaded with the paper's settings
+                "paper_example": paper_presets.is_paper_example(name),
             }
             for name, ex in EXAMPLES.items()
         ]
+
+    @app.get("/api/examples/{name}/paper")
+    def example_paper(name: str):
+        """Paper settings of an example as form values (docs/PAPER_SETTINGS.md):
+        {is_paper, default_method, methods, presets{method: fields},
+        mma_reference_refined, records_seed0} or, for a non-paper example, the
+        paper protocol on its own problem settings (protocol_preset)."""
+        ex = EXAMPLES.get(name)
+        if ex is None:
+            raise HTTPException(404, f"Unknown example '{name}'")
+        return paper_presets.paper_info(name, ex.get("config_kwargs") or {})
 
     @app.post("/api/examples/{name}/load")
     def load_example(name: str):
@@ -532,6 +580,15 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             for i in range(n)
         ]
 
+        # Problem fields from the example; every run setting (mesh, volume
+        # fraction, optimizer, QUBO options, seed, iteration cap, evaluation)
+        # from the paper (freeto.paper / webapp.paper_presets), so loading a
+        # paper example reproduces the study run exactly.
+        paper = paper_presets.paper_info(name, kwargs)
+        if paper.get("is_paper"):
+            preset = paper["presets"][paper["default_method"]]
+        else:
+            preset = paper.get("protocol_preset") or {}
         prefill = {
             "label": ex["title"],
             "domain_id": domain_rec["id"] if domain_rec else None,
@@ -562,7 +619,9 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             ],
             "max_iter": kwargs.get("max_iter", 200),
             "solver": kwargs.get("solver", "auto"),
+            "example": name,
         }
+        prefill.update(preset)
         files_display = {
             "domain": domain_rec,
             **{f"force{i+1}": force_recs[i] for i in range(n)},
@@ -572,7 +631,7 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             "zfixed": zfixed_rec,
             "keepdom": keepdom_rec,
         }
-        return {"prefill": prefill, "files": files_display}
+        return {"prefill": prefill, "files": files_display, "paper": paper}
 
     # -- jobs -------------------------------------------------------------
 
@@ -599,42 +658,18 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
                     "This installed 'freeto' core does not support optimizer=\"QUBO\" yet "
                     "(FreeTOConfig has no 'qubo' field) — use OC or MMA, or update freeto/.",
                 )
-            qubo_field_map = {
-                "backend": req.qubo_backend,
-                "hessian": req.qubo_hessian,
-                "volume": req.qubo_volume,
-                "lambda_q": req.qubo_lambda_q,
-                "gamma": req.qubo_gamma,
-                "move_penalty": req.qubo_move_penalty,
-                "frontier_fraction": req.qubo_frontier_fraction,
-                "block_size": req.qubo_block_size,
-                "blocks": req.qubo_blocks,
-                "sweeps": req.qubo_sweeps,
-                "init": req.qubo_init,
-                "er": req.qubo_er,
-                "n_warm": req.qubo_n_warm,
-                "patience": req.qubo_patience,
-                "num_reads": req.qubo_num_reads,
-                "seed": req.qubo_seed,
-                "qaoa_p": req.qubo_qaoa_p,
-                "qaoa_shots": req.qubo_qaoa_shots,
-                "qaoa_init": req.qubo_qaoa_init,
-                "time_limit": req.qubo_time_limit,
-                "verify_exact": req.qubo_verify_exact,
-                "interp": req.qubo_interp,
-                "qaoa_polish": req.qubo_qaoa_polish,
-                "move_limit": req.qubo_move_limit,
-                "move_limit_min": req.qubo_move_limit_min,
-                "protect_loads": req.qubo_protect_loads,
-                "guard": req.qubo_guard,
-                "guard_tol": req.qubo_guard_tol,
-                "guard_tol_target": req.qubo_guard_tol_target,
-                "max_rejects": req.qubo_max_rejects,
-            }
+            # every QUBOOptions field has a request field "qubo_<name>"; unset
+            # (None) fields keep freeto.quantum's defaults
+            qubo_field_map = {name: getattr(req, f"qubo_{name}") for name in QUBO_REQUEST_FIELDS}
             extra_kwargs["qubo"] = {k: v for k, v in qubo_field_map.items() if v is not None}
             extra_kwargs["eval_binary"] = req.eval_binary
         if req.eval_crisp and _config_has_field(FreeTOConfig, "eval_crisp"):
             extra_kwargs["eval_crisp"] = True
+        for name in ("eval_beta", "eval_refined", "mma_constraint", "mma_feasible_stop",
+                     "init_perturb", "init_seed"):
+            val = getattr(req, name)
+            if val is not None and _config_has_field(FreeTOConfig, name):
+                extra_kwargs[name] = val
         if _config_has_field(FreeTOConfig, "audit"):
             extra_kwargs["audit"] = bool(req.audit)
 
@@ -682,7 +717,12 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             raise HTTPException(400, f"Invalid configuration: {exc}")
 
         label = req.label or "Untitled job"
-        job = manager.submit(label, req.model_dump(), cfg, audit=req.audit)
+        try:
+            paper = paper_presets.paper_comparison(req.example, cfg)
+        except Exception:  # noqa: BLE001 -- the comparison never blocks a run
+            logger.exception("paper comparison failed")
+            paper = None
+        job = manager.submit(label, req.model_dump(), cfg, audit=req.audit, paper=paper)
         return {
             "job_id": job.id,
             "status": job.status,
@@ -738,6 +778,39 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "Result not ready")
         fname = f"{_safe_filename(job.label)}_{job_id}.npz"
+        return FileResponse(path, media_type="application/octet-stream", filename=fname)
+
+    @app.get("/api/jobs/{job_id}/evaluated.stl")
+    def evaluated_stl(job_id: str):
+        """The evaluated binary design (crisp fine-grid design at the target
+        volume fraction, i.e. the design behind the crisp / refined compliance),
+        as the lightly smoothed isosurface the paper's Fig. 5 shows; mirrored
+        like the STL output for symmetric models."""
+        job = manager.get(job_id)
+        if job is None:
+            raise HTTPException(404, "Unknown job id")
+        if job.kind != "continuum" or job.result is None:
+            raise HTTPException(404, "Result not ready")
+        try:
+            data = manager.get_evaluated_stl(job)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("evaluated design failed")
+            raise HTTPException(500, f"Could not build the evaluated design: {exc}")
+        if data is None:
+            raise HTTPException(404, "No evaluated design for this job")
+        return Response(content=data, media_type="model/stl")
+
+    @app.get("/api/jobs/{job_id}/fields.npz")
+    def result_fields(job_id: str):
+        """Evaluated pre-smoothing field, binary design (QUBO / BESO) and
+        histories in the layout of the study's fields/<run_id>.npz."""
+        job = manager.get(job_id)
+        if job is None:
+            raise HTTPException(404, "Unknown job id")
+        path = jobs_dir / job_id / "fields.npz"
+        if not path.is_file():
+            raise HTTPException(404, "Result not ready")
+        fname = f"{_safe_filename(job.label)}_{job_id}_fields.npz"
         return FileResponse(path, media_type="application/octet-stream", filename=fname)
 
     # -- physics audit (docs/AUDIT_API.md) -----------------------------------

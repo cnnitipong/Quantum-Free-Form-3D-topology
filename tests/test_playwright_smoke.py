@@ -3,7 +3,9 @@
 Starts a real server subprocess, drives it with Playwright/Chromium exactly
 like a person would (load page -> load GE example -> shrink the job to a
 tiny/fast configuration -> Run -> wait for completion), and saves screenshots
-to webapp/screenshots/ for visual review.
+for visual review to a temporary directory (FREETO_SMOKE_SCREENSHOTS=<dir> to
+keep them).  The committed webapp/screenshots/01, 02 and 04 show a finished
+paper-default run and come from scripts/webapp_screenshots.py.
 
 Requires the Chromium build already installed at PLAYWRIGHT_BROWSERS_PATH
 (do NOT run `playwright install` — see task instructions); this test skips
@@ -55,6 +57,7 @@ def _wait_for_health(base_url: str, timeout: float = 20.0):
 
 @pytest.mark.skipif(not HAVE_PLAYWRIGHT, reason="playwright not installed")
 def test_browser_smoke(tmp_path):
+    SCREENSHOT_DIR = Path(os.environ.get("FREETO_SMOKE_SCREENSHOTS") or tmp_path / "screenshots")
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     port = _free_port()
     workdir = tmp_path / "freeto_web_playwright"

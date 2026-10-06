@@ -854,3 +854,15 @@ details > summary:focus-visible { outline: 1px solid var(--accent); outline-offs
 input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 #viewport-toolbar input[type="checkbox"] { accent-color: #141414; }
+
+/* Paper settings (docs/PAPER_SETTINGS.md): paper-run selector, evaluation
+   options, result card. */
+#paper-row { margin-top: 8px; align-items: flex-end; }
+#paper-row .paper-method-label { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+#paper-row select { width: 100%; min-width: 0; }
+.eval-grid { margin-top: 12px; }
+.eval-grid > label.inline { flex-direction: row; align-items: center; gap: 6px; justify-content: flex-start; }
+.result-table { width: 100%; }
+.result-table td.num { text-align: right; font-family: var(--font-mono, monospace); }
+#result-paper { margin-bottom: 0; white-space: normal; }
+#viewport-toolbar select { max-width: 220px; }

@@ -44,6 +44,13 @@ const el = {
   quantumUnavailableMsg: $("quantum-unavailable-msg"),
   quantumSettingsBody: $("quantum-settings-body"),
   quboBackend: $("qubo-backend"),
+  paperMethod: $("paper-method"),
+  paperResetBtn: $("paper-reset-btn"),
+  paperNote: $("paper-note"),
+  resultCard: $("result-card"),
+  resultBody: $("result-body"),
+  resultPaper: $("result-paper"),
+  designView: $("design-view"),
 };
 
 // ---------------------------------------------------------------------
@@ -63,6 +70,10 @@ const state = {
   continuumQuboSupported: false,
   activeTab: "setup",
   quboStatusText: "",
+  // Paper settings (docs/PAPER_SETTINGS.md): the example whose presets the form
+  // holds, and GET /api/examples/<name>/paper for it.
+  paper: { example: null, info: null },
+  loadedExample: null,
   truss: {
     benchmarks: [],         // list_benchmarks() payload
     methods: [],
@@ -621,34 +632,48 @@ el.dropzone.addEventListener("drop", (e) => uploadFiles(e.dataTransfer.files));
 // Examples
 // ---------------------------------------------------------------------
 const CATEGORY_LABELS = {
-  paper: "Paper examples",
+  qff3d: "Paper examples (manuscript Table 1)",
+  paper: "FreeTO examples",
   beam: "Beam-like",
   "truss-like": "Truss-like continuum",
   advanced: "Advanced",
 };
-const CATEGORY_ORDER = ["paper", "beam", "truss-like", "advanced"];
+const CATEGORY_ORDER = ["qff3d", "paper", "beam", "truss-like", "advanced"];
 
-// Out-of-the-box path: the example select starts on DEFAULT_EXAMPLE, and an
-// example loaded while the QUBO optimizer (the UI default) is selected uses
-// the MeshControl in QUBO_QUICK_MESH, so Load -> Run with the default QUBO
-// settings finishes in about a minute (the block Hessian's cost grows quickly
-// with the mesh: the cantilever's own MeshControl 50 takes several minutes).
+// Out-of-the-box path: the example select starts on DEFAULT_EXAMPLE and every
+// parameter field holds the paper's value for it (QUBO-SA with the block
+// Hessian, seed 0, the paper mesh); loading a paper example, or "Paper
+// settings", puts the paper values of the selected paper run back.
 const DEFAULT_EXAMPLE = "cantilever_beam";
-const QUBO_QUICK_MESH = { cantilever_beam: 25 };
+const PAPER_METHOD_TITLES = {
+  "QUBO-sa (block)": "QUBO-SA (block Hessian)",
+  "MMA": "MMA (reference)",
+  "BESO-sort": "BESO sorting",
+  "QUBO-sa (diag)": "QUBO-SA (diag Hessian)",
+  "QUBO-qaoa kb8 p1 penalty (+greedy)": "QUBO-QAOA (blocks of 8, p = 1, +greedy)",
+  "BESO-sort (move 0.04)": "BESO sorting, move 0.04 (control)",
+  "QUBO-sa (scalar)": "QUBO-SA (scalar, control)",
+  "QUBO-sa (block, Qx3)": "QUBO-SA (block, Qx3, control)",
+  "OC (FreeTO default, flagged)": "OC (FreeTO default, flagged)",
+};
 
 async function fetchExamples() {
   const resp = await fetch("/api/examples");
   const list = await resp.json();
   el.exampleSelect.innerHTML = '<option value="">Choose an example…</option>';
 
-  // Group by `category` (paper/beam/truss-like/advanced) into <optgroup>s, in
-  // a fixed sensible order, with any unrecognised category appended last.
+  // Group by category into <optgroup>s; the five examples of the manuscript
+  // come first in their own group (in the paper's order).
   const byCategory = new Map();
   for (const ex of list) {
     state.examples[ex.name] = ex;
-    const cat = ex.category || "paper";
+    const cat = ex.paper_example ? "qff3d" : (ex.category || "paper");
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     byCategory.get(cat).push(ex);
+  }
+  const paperOrder = ["cantilever_beam", "mbb_beam", "bridge_deck", "l_bracket", "GE_bracket"];
+  if (byCategory.has("qff3d")) {
+    byCategory.get("qff3d").sort((a, b) => paperOrder.indexOf(a.name) - paperOrder.indexOf(b.name));
   }
   const orderedCats = [
     ...CATEGORY_ORDER.filter((c) => byCategory.has(c)),
@@ -675,6 +700,159 @@ el.exampleSelect.addEventListener("change", () => {
   el.exampleDesc.textContent = ex ? ex.description : "";
 });
 
+// --- paper settings ----------------------------------------------------
+async function fetchPaperInfo(name) {
+  try {
+    const resp = await fetch(`/api/examples/${name}/paper`);
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+function setPaperInfo(name, info) {
+  state.paper = { example: name, info: info || null };
+  const methods = (info && info.is_paper && info.methods) || [];
+  const keep = el.paperMethod.value;
+  el.paperMethod.innerHTML = "";
+  if (!methods.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "paper protocol (QUBO-SA, block)";
+    el.paperMethod.appendChild(o);
+  }
+  for (const m of methods) {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = PAPER_METHOD_TITLES[m] || m;
+    el.paperMethod.appendChild(o);
+  }
+  el.paperMethod.value = methods.includes(keep) ? keep : (info && info.default_method) || (methods[0] || "");
+  const ex = state.examples[name];
+  if (info && info.is_paper) {
+    const p = info.presets[info.default_method] || {};
+    el.paperNote.textContent = `Paper settings for ${ex ? ex.title : name}: MeshControl ${p.mesh_control}, ` +
+      `V* = ${p.volfrac}, E = ${Number(p.youngs_modulus) / 1e9} GPa, ν = ${p.poisson_ratio}, q = ${p.penal}, ` +
+      `rmin = ${p.rmin}, cap ${p.max_iter} iterations, seed 0, refined evaluation f = ${p.eval_refined}.`;
+  } else {
+    el.paperNote.textContent = "Not one of the paper's examples: the paper's run protocol (QUBO-SA with the " +
+      "block Hessian, seed 0, cap 300, refined evaluation f = 2) on the example's own mesh and volume fraction.";
+  }
+}
+
+function currentPreset() {
+  const info = state.paper.info;
+  if (!info) return null;
+  if (info.is_paper) return info.presets[el.paperMethod.value] || info.presets[info.default_method] || null;
+  return info.protocol_preset || null;
+}
+
+function setSelectValue(id, value) {
+  const sel = $(id);
+  const v = value == null ? "" : String(value);
+  if (![...sel.options].some((o) => o.value === v)) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = v;
+    sel.appendChild(o);
+  }
+  sel.value = v;
+}
+
+// Sets every form field from a preset / prefill object whose keys are the
+// POST /api/jobs field names (webapp/paper_presets.py).
+function applyPreset(p) {
+  if (!p) return;
+  const num = (id, v) => { if (v !== undefined) $(id).value = v == null ? "" : v; };
+  const chk = (id, v) => { if (v !== undefined && v !== null) $(id).checked = !!v; };
+  num("p-mesh_control", p.mesh_control);
+  num("p-volfrac", p.volfrac);
+  num("p-youngs_modulus", p.youngs_modulus);
+  num("p-poisson_ratio", p.poisson_ratio);
+  if (p.method) $("p-method").value = String(p.method).toUpperCase();
+  if (p.optimizer) {
+    const want = String(p.optimizer).toUpperCase();
+    const opt = [...el.pOptimizer.options].find((o) => o.value === want && !o.disabled);
+    if (opt) el.pOptimizer.value = want;
+  }
+  num("p-penal", p.penal);
+  num("p-rmin", p.rmin);
+  if (p.loadtype) $("p-loadtype").value = p.loadtype;
+  chk("p-keep_bc", p.keep_bc);
+  chk("p-keep_bcx", p.keep_bcx);
+  chk("p-keep_bcy", p.keep_bcy);
+  chk("p-keep_bcz", p.keep_bcz);
+  num("p-max_iter", p.max_iter);
+  if (p.solver) $("p-solver").value = p.solver;
+  chk("eval_crisp", p.eval_crisp);
+  chk("p-audit", p.audit);
+  if (p.eval_refined !== undefined) setSelectValue("p-eval_refined", p.eval_refined);
+  num("p-eval_beta", p.eval_beta);
+  if (p.mma_constraint) $("p-mma_constraint").value = p.mma_constraint;
+  chk("p-mma_feasible_stop", p.mma_feasible_stop);
+  chk("eval_binary", p.eval_binary);
+  // QUBO fields (all present in a preset; the form shows the ones a paper run changes)
+  if (p.qubo_backend !== undefined) setSelectValue("qubo-backend", p.qubo_backend || "auto");
+  if (p.qubo_hessian) setSelectValue("qubo-hessian", p.qubo_hessian);
+  if (p.qubo_volume) $("qubo-volume").value = p.qubo_volume;
+  num("qubo-frontier_fraction", p.qubo_frontier_fraction);
+  num("qubo-block_size", p.qubo_block_size);
+  num("qubo-sweeps", p.qubo_sweeps);
+  num("qubo-num_reads", p.qubo_num_reads);
+  num("qubo-qaoa_p", p.qubo_qaoa_p);
+  num("qubo-qaoa_shots", p.qubo_qaoa_shots);
+  num("qubo-seed", p.qubo_seed);
+  num("qubo-lambda_q", p.qubo_lambda_q);
+  num("qubo-gamma", p.qubo_gamma);
+  num("qubo-move_penalty", p.qubo_move_penalty);
+  if (p.qubo_blocks) $("qubo-blocks").value = p.qubo_blocks;
+  if (p.qubo_init) $("qubo-init").value = p.qubo_init;
+  num("qubo-er", p.qubo_er);
+  num("qubo-n_warm", p.qubo_n_warm);
+  num("qubo-patience", p.qubo_patience);
+  if (p.qubo_qaoa_init) $("qubo-qaoa_init").value = p.qubo_qaoa_init;
+  num("qubo-time_limit", p.qubo_time_limit);
+  if (p.qubo_interp) $("qubo-interp").value = p.qubo_interp;
+  num("qubo-move_limit", p.qubo_move_limit);
+  num("qubo-move_limit_min", p.qubo_move_limit_min);
+  num("qubo-guard_tol", p.qubo_guard_tol);
+  num("qubo-guard_tol_target", p.qubo_guard_tol_target);
+  num("qubo-max_rejects", p.qubo_max_rejects);
+  num("qubo-hessian_scale", p.qubo_hessian_scale);
+  chk("qubo-verify_exact", p.qubo_verify_exact);
+  chk("qubo-protect_loads", p.qubo_protect_loads);
+  chk("qubo-guard", p.qubo_guard);
+  chk("qubo-qaoa_polish", p.qubo_qaoa_polish);
+  chk("qubo-connectivity", p.qubo_connectivity);
+  updateQuantumPanelVisibility();
+}
+
+function applyPaperSettings() {
+  const p = currentPreset();
+  if (!p) return;
+  applyPreset(p);
+  const m = el.paperMethod.value;
+  setRunMessage(state.paper.info && state.paper.info.is_paper
+    ? `Paper settings applied: ${PAPER_METHOD_TITLES[m] || m}, seed 0.`
+    : "Paper run protocol applied.", false);
+}
+
+el.paperMethod.addEventListener("change", applyPaperSettings);
+el.paperResetBtn.addEventListener("click", async () => {
+  const name = state.loadedExample || el.exampleSelect.value || DEFAULT_EXAMPLE;
+  if (state.paper.example !== name) setPaperInfo(name, await fetchPaperInfo(name));
+  applyPaperSettings();
+});
+
+// Initial state: every field holds the paper value of the default example.
+async function initPaperDefaults() {
+  const info = await fetchPaperInfo(DEFAULT_EXAMPLE);
+  if (!info || !info.available) return;
+  setPaperInfo(DEFAULT_EXAMPLE, info);
+  applyPreset(currentPreset());
+}
+
 async function loadExample(name) {
   const resp = await fetch(`/api/examples/${name}/load`, { method: "POST" });
   if (!resp.ok) {
@@ -682,14 +860,12 @@ async function loadExample(name) {
     return;
   }
   const data = await resp.json();
+  state.loadedExample = name;
+  if (data.paper) setPaperInfo(name, data.paper);
   applyPrefill(data.prefill, data.files);
-  const quick = QUBO_QUICK_MESH[name];
-  if (quick && el.pOptimizer.value === "QUBO" && Number(data.prefill.mesh_control) > quick) {
-    $("p-mesh_control").value = quick;
-    const ex = state.examples[name];
-    el.exampleDesc.textContent = `${ex ? ex.description : ""} MeshControl set to ${quick} for a quick QUBO run ` +
-      `(about a minute; the example's own value is ${data.prefill.mesh_control}).`;
-  }
+  // the selected paper run (QUBO-SA block by default) of this example
+  const p = currentPreset();
+  if (p) applyPreset(p);
 }
 
 function applyPrefill(prefill, filesMap) {
@@ -731,29 +907,10 @@ function applyPrefill(prefill, filesMap) {
   state.symmetry = (prefill.symmetry || []).map((s) => ({ ...s }));
   renderSymmetryRows();
 
-  $("p-mesh_control").value = prefill.mesh_control;
-  $("p-volfrac").value = prefill.volfrac;
-  $("p-youngs_modulus").value = prefill.youngs_modulus;
-  $("p-poisson_ratio").value = prefill.poisson_ratio;
-  $("p-method").value = prefill.method;
-  // Examples normally leave the optimizer to the user (prefill.optimizer is
-  // null), so the UI default (QUBO) or the user's choice is kept; an example
-  // that prescribes one still sets it.
-  if (prefill.optimizer) {
-    const want = String(prefill.optimizer).toUpperCase();
-    const opt = [...el.pOptimizer.options].find((o) => o.value === want && !o.disabled);
-    if (opt) el.pOptimizer.value = want;
-  }
-  updateQuantumPanelVisibility();
-  $("p-penal").value = prefill.penal;
-  $("p-rmin").value = prefill.rmin;
-  $("p-loadtype").value = prefill.loadtype;
-  $("p-keep_bc").checked = !!prefill.keep_bc;
-  $("p-keep_bcx").checked = !!prefill.keep_bcx;
-  $("p-keep_bcy").checked = !!prefill.keep_bcy;
-  $("p-keep_bcz").checked = !!prefill.keep_bcz;
-  $("p-max_iter").value = prefill.max_iter;
-  $("p-solver").value = prefill.solver;
+  // Every run setting: the server's prefill holds the paper values for a
+  // paper example (webapp/paper_presets.py) and the example's own values
+  // plus the paper protocol otherwise.
+  applyPreset(prefill);
 
   setTimeout(fitView, 300);
 }
@@ -810,7 +967,13 @@ function buildJobPayload() {
     max_iter: parseInt($("p-max_iter").value, 10),
     solver: $("p-solver").value,
     eval_crisp: $("eval_crisp").checked,
+    eval_refined: intOrNull("p-eval_refined"),
+    eval_beta: numOrNull("p-eval_beta"),
+    mma_constraint: $("p-mma_constraint").value,
+    mma_feasible_stop: $("p-mma_feasible_stop").checked,
     audit: $("p-audit").checked,
+    // the loaded example (only used to compare the result with the paper's values)
+    example: state.loadedExample,
     ...($("p-optimizer").value === "QUBO" ? buildQuboPayload() : {}),
   };
 }
@@ -867,6 +1030,8 @@ function buildQuboPayload() {
     qubo_protect_loads: $("qubo-protect_loads").checked,
     qubo_guard: $("qubo-guard").checked,
     qubo_qaoa_polish: $("qubo-qaoa_polish").checked,
+    qubo_hessian_scale: numOrNull("qubo-hessian_scale"),
+    qubo_connectivity: $("qubo-connectivity").checked,
     eval_binary: $("eval_binary").checked,
   };
 }
@@ -997,6 +1162,8 @@ async function runJob() {
   clearQuboStatus();
   clearAuditUI();
   clearDesignMesh();
+  state.finishedJobId = null;
+  el.resultCard.hidden = true;
   setRunMessage(
     data.queue_position && data.queue_position > 1
       ? `Queued (position ${data.queue_position}).`
@@ -1088,8 +1255,10 @@ async function pollOnce(jobId) {
         (ri.crisp_volfrac != null ? ` at V=${Number(ri.crisp_volfrac).toFixed(3)}` : "") + "."
       : "";
     setRunMessage("Done." + crispTxt, false);
+    renderResult(s);
     el.downloadStlBtn.disabled = false;
     el.downloadNpzBtn.disabled = false;
+    state.finishedJobId = jobId;
     await loadFinalDesign(jobId);
     await loadAudit(jobId, s);
     refreshAuditJobList();
@@ -1098,6 +1267,7 @@ async function pollOnce(jobId) {
     if (s.has_result) {
       el.downloadStlBtn.disabled = false;
       el.downloadNpzBtn.disabled = false;
+      state.finishedJobId = jobId;
       await loadFinalDesign(jobId);
       await loadAudit(jobId, s);
       refreshAuditJobList();
@@ -1155,9 +1325,51 @@ async function maybeRefreshPreview(jobId, iter) {
   }
 }
 
+// Result card: the quantities of the paper (native c and V, element proxy,
+// refined binary voxel c and V as in Fig. 5) and, for a paper example, the
+// refined gap to the paper's MMA reference and the published values of the
+// matching paper run.
+function renderResult(s) {
+  const ri = s.result_info || {};
+  const f4 = (v) => (v == null || !isFinite(v) ? "—" : Number(v).toPrecision(4));
+  const f3 = (v) => (v == null || !isFinite(v) ? "—" : Number(v).toFixed(3));
+  const rows = [
+    ["native (optimizer's own)", ri.native_compliance, ri.native_volfrac],
+    ["crisp element proxy", ri.crisp_compliance, ri.crisp_volfrac],
+    [`refined binary voxel${ri.refined_f ? ` (f = ${ri.refined_f})` : ""}`, ri.refined_compliance, ri.refined_volfrac],
+  ];
+  el.resultBody.innerHTML = rows.map(([lab, c, v]) =>
+    `<tr><td>${escHtml(lab)}</td><td class="num">${f4(c)}</td><td class="num">${f3(v)}</td></tr>`).join("");
+  const bits = [];
+  if (ri.iterations != null) bits.push(`${ri.iterations} iterations`);
+  const pp = s.paper || null;
+  if (ri.gap_refined != null) {
+    bits.push(`Refined gap to the paper's MMA reference (c = ${f4(ri.gap_reference)}): ` +
+      `${(100 * ri.gap_refined >= 0 ? "+" : "")}${(100 * ri.gap_refined).toFixed(2)} %`);
+  } else if (pp && pp.example) {
+    bits.push(pp.same_problem ? "no refined gap (refined evaluation f = 2 is off)"
+      : `not the paper's problem (${(pp.problem_differences || []).join(", ")} differ), no gap to the paper`);
+  }
+  if (pp && pp.method && pp.record) {
+    const r = pp.record;
+    bits.push(`same settings as the paper run "${pp.method}", seed ${pp.seed}; paper values: ` +
+      `${r.iterations} iterations, native c = ${f4(r.compliance)}, refined c = ${f4(r.refined_compliance)}, ` +
+      `V = ${f3(r.refined_volfrac)}`);
+  } else if (pp && pp.example && pp.same_problem) {
+    bits.push("settings differ from every paper run of this example (no published values to compare)");
+  }
+  el.resultPaper.textContent = bits.map((b) => b.charAt(0).toUpperCase() + b.slice(1)).join(". ") +
+    (bits.length ? "." : "");
+  el.resultCard.hidden = false;
+}
+
 async function loadFinalDesign(jobId) {
   try {
-    const resp = await fetch(`/api/jobs/${jobId}/result.stl`, { cache: "no-store" });
+    let resp = null;
+    if (el.designView.value === "evaluated") {
+      resp = await fetch(`/api/jobs/${jobId}/evaluated.stl`, { cache: "no-store" });
+    }
+    if (!resp || !resp.ok) resp = await fetch(`/api/jobs/${jobId}/result.stl`, { cache: "no-store" });
     if (!resp.ok) return;
     const buf = await resp.arrayBuffer();
     setDesignGeometry(buf, true);
@@ -1207,6 +1419,9 @@ el.toggleDesign.addEventListener("change", () => {
   if (state.designMesh) state.designMesh.visible = el.toggleDesign.checked;
 });
 el.toggleAxes.addEventListener("change", () => { axesHelper.visible = el.toggleAxes.checked; });
+el.designView.addEventListener("change", () => {
+  if (state.finishedJobId && !state.running) loadFinalDesign(state.finishedJobId);
+});
 el.fitViewBtn.addEventListener("click", fitView);
 
 el.downloadStlBtn.addEventListener("click", () => {
@@ -2616,7 +2831,8 @@ function init() {
   initTabs();
   loadHealth();
   fetchExamples();
-  fetchQuantumBackends();
+  // the paper's values in every field once the backend list is known
+  fetchQuantumBackends().then(initPaperDefaults);
   fetchTrussBenchmarks();
   renderTrussResultsTable();
   refreshAuditJobList();

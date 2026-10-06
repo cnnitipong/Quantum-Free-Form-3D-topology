@@ -5,9 +5,11 @@ using a structured mesh with smooth boundaries in Matlab", *Advances in Engineer
 doi:[10.1016/j.advengsoft.2024.103790](https://doi.org/10.1016/j.advengsoft.2024.103790); MIT licence): a Python
 port of FreeTO (the `freeto` package, also called FreeTO-Python below), extended with a quantum-annealing-compatible
 QUBO design update that can be solved by exact enumeration, simulated annealing, tabu search, greedy descent or
-simulated QAOA, plus a local web app, **QFF-3D**, for driving it. The web app selects the QUBO design update by
-default (simulated-annealing backend, block Hessian: the settings of the paper's QUBO-SA (block) runs); OC and MMA
-remain one click away.
+simulated QAOA, plus a local web app, **QFF-3D**, for driving it. The web app opens with the paper's settings:
+the QUBO design update with the simulated-annealing backend and the block Hessian (the paper's QUBO-SA (block)
+runs), seed 0, the paper's mesh, iteration cap and evaluation, and a run of one of the paper's five examples
+reproduces the published result exactly (see "Web app defaults = paper settings" below and
+`docs/PAPER_SETTINGS.md`); MMA, BESO sorting, OC and the other paper runs are one selection away.
 
 Source: <https://github.com/cnnitipong/Quantum-Free-Form-3D-topology>
 
@@ -317,14 +319,17 @@ All JSON except where noted.
 | POST | `/api/upload` | multipart STL upload → `[{id, name, triangles, bbox}]` |
 | GET | `/api/files/{id}` | serve an uploaded/example STL (binary) |
 | GET | `/api/examples` | list bundled examples |
-| POST | `/api/examples/{name}/load` | register an example's STLs, return a prefilled config |
-| POST | `/api/jobs` | create + queue a job (config referencing file ids; `audit` (bool, default `true`) switches the physics check on/off); 400 on validation error |
+| POST | `/api/examples/{name}/load` | register an example's STLs, return a prefilled config (paper settings for the five paper examples) and `paper` (as below) |
+| GET | `/api/examples/{name}/paper` | paper settings of an example as form values: `is_paper`, `methods`, `default_method`, `presets{method: fields}`, `mma_reference_refined`, `records_seed0`; for other examples `protocol_preset` |
+| POST | `/api/jobs` | create + queue a job (config referencing file ids; `audit` (bool, default `true`) switches the physics check on/off; every `QUBOOptions` field as `qubo_<name>`; `eval_beta`, `eval_refined`, `mma_constraint`, `mma_feasible_stop`, `init_perturb`, `init_seed`; `example` = the loaded example's name for the paper comparison); 400 on validation error |
 | GET | `/api/jobs` | list jobs run in this server session |
 | GET | `/api/jobs/{id}` | job status: stage, setup info, history arrays, log tail, error, and (continuum) `audit_enabled`, `audit_ok`, `n_components`, `floating_frac`, and the latest `audit_live` (`{n_components, floating_frac}`, QUBO runs; also per iteration in `history.audit_live`) |
 | POST | `/api/jobs/{id}/stop` | request cooperative stop |
 | GET | `/api/jobs/{id}/preview.stl` | latest cached live-preview mesh (binary STL) |
 | GET | `/api/jobs/{id}/result.stl` | final result mesh (binary STL) |
 | GET | `/api/jobs/{id}/result.npz` | final result arrays (NPZ) |
+| GET | `/api/jobs/{id}/evaluated.stl` | the evaluated binary design (crisp fine-grid design at V*, lightly smoothed, as rendered in the paper's Fig. 5) |
+| GET | `/api/jobs/{id}/fields.npz` | evaluated pre-smoothing field, binary design and histories (layout of the study's `fields/<run_id>.npz`) |
 | GET | `/api/quantum/backends` | QUBO solver backends (`freeto.quantum.available_backends()`); always 200, `{"quantum_available": false, "backends": []}` if `freeto.quantum` isn't installed |
 | GET | `/api/jobs/{id}/truss_result` | a truss job's `TrussResult.to_dict()` once it's done |
 | GET | `/api/truss/benchmarks` | list truss ground-structure benchmarks (`freeto.truss.list_benchmarks()`); always 200 |
@@ -351,26 +356,45 @@ benchmark, unavailable exact enumeration, unknown study suite, an unwired `optim
 The app has three tabs: **Setup** (the original single-run continuum workflow), **Truss**,
 and **Study**.
 
-**Setup tab.** Left panel: example picker (grouped by category - paper / beam /
-truss-like / advanced), drag-and-drop STL upload with a per-file role selector
+**Setup tab.** Left panel: example picker (the paper's five examples first, then the FreeTO
+examples and the beam / truss-like / advanced ones), a **Paper run** selector with a **Paper settings**
+button, drag-and-drop STL upload with a per-file role selector
 (Domain / Fixed variants / Load region / Keep domain / Unused) and visibility toggle, a
 load-case table (file + Fx/Fy/Fz per row - a file can be reused across rows), all FreeTO
-parameters including an optimizer select listing **QUBO** first (selected by default), then **OC / MMA**,
-and Run/Stop/Download controls. With QUBO selected (the default) the **QUBO design update** group is
-shown, preset to backend `sa` and Hessian `block` (the paper's QUBO-SA (block) settings; QAOA stays
-selectable but is not the default, as the state-vector simulator is slow). The group holds the backend (populated from
-`/api/quantum/backends`, unavailable ones shown disabled with an install/token hint),
-Hessian mode, volume handling (bisection/penalty), frontier fraction, block size, sweeps,
-SA/tabu reads, QAOA layers (p) and shots, seed, and (under "Advanced") the remaining
-`QUBOOptions` fields (γ defaults to the core's 0; the move limit / accept-if-improves guard /
-load protection / QAOA polish safeguards of the QUBO update are exposed too) - every field has a tooltip and a sensible default from
-`docs/QUANTUM_API.md`. If `freeto.quantum` isn't installed, the QUBO option is disabled in
-the optimizer select and the UI falls back to OC. Loading an example keeps the selected optimizer
-(examples do not prescribe one; `prefill.optimizer` is `null`). Note that the *job API* default is
-unchanged: a `POST /api/jobs` request that omits `optimizer` still runs OC (as in `docs/CONTRACT.md`);
-only the web UI defaults to QUBO. The example select starts on the **cantilever beam**; loaded while QUBO is
-selected it uses MeshControl 25 instead of the example's 50 (the block Hessian's cost grows quickly with
-the mesh), so Load then Run with the default QUBO settings finishes in about a minute. Right panel: a three.js viewport (inputs colour-coded by
+parameters including an optimizer select listing **QUBO** first, then **OC / MMA**, the evaluation
+options (refined binary voxel evaluation f, evaluation beta, MMA volume constraint and feasible stop),
+Run/Stop/Download controls and, after a run, the **Result** card. With QUBO selected the **QUBO design
+update** group is shown: backend (populated from `/api/quantum/backends`, unavailable ones disabled
+with an install/token hint), Hessian mode, volume handling, frontier fraction, block size, sweeps,
+SA/tabu reads, QAOA layers (p) and shots, seed, and (under "Advanced") the other `QUBOOptions`
+fields (γ, move penalty, block grouping, init, ER, warm-up, patience, QAOA init, time limit,
+interpolation, move limit and its minimum, guard tolerances, rejects, Hessian scale κ,
+verify-exact, load protection, guard, QAOA polish, connectivity repair) - every field has a tooltip.
+If `freeto.quantum` isn't installed, the QUBO option is disabled and the UI falls back to OC.
+
+**Web app defaults = paper settings.** When the page opens, every field holds the paper's value
+for the cantilever (MeshControl 36, V* = 0.30, E = 210 GPa, ν = 0.3, SIMP q = 3, r<sub>min</sub> = 1.5,
+QUBO-SA with the block Hessian, seed 0, iteration cap 300, crisp proxy, evaluation beta 8, refined
+binary voxel evaluation f = 2, MMA with the filtered volume constraint and the feasible stop).
+Loading one of the five paper examples (cantilever MC 36, MBB half beam MC 46, bridge deck MC 41
+at V* = 0.35, L-bracket MC 30, GE bracket MC 24) sets every field to that example's values for the
+selected paper run (QUBO-SA (block) by default; MMA, BESO sorting, QUBO-SA diag / scalar / Qx3,
+BESO move 0.04, QUBO-QAOA and OC where the paper ran them); **Paper settings** puts them back after
+edits. These presets come from the study suite itself (`freeto/paper.py` reads
+`freeto.study.suite_spec("quick2")`), and `tests/test_webapp_paper.py` checks that a job posted from
+them builds the study's `FreeTOConfig` field by field. Jobs run with one pinned BLAS/OpenMP thread
+like the study (`FREETO_THREADS`, default 1, `0` = no pinning), so a paper-settings run reproduces the
+published record bit for bit (same software stack, PARDISO); a QUBO run at the paper mesh takes a few
+minutes (cantilever about 3 min). The **Result** card shows the native compliance and volume, the
+crisp element proxy, the refined binary voxel compliance c and volume V (the values under Fig. 5),
+the refined gap to the paper's MMA reference run of that example and, when every setting equals a
+paper run, that run's published values. The viewport shows the **evaluated binary design** (as in
+Fig. 5) by default and the smooth-edge STL output on request (*view* select). Other examples get
+the same protocol on their own mesh and volume fraction. The *job API* defaults are unchanged: a
+`POST /api/jobs` request that omits `optimizer` still runs OC (as in `docs/CONTRACT.md`).
+See `docs/PAPER_SETTINGS.md` for the full table of settings.
+
+Right panel: a three.js viewport (inputs colour-coded by
 role, with a force-direction arrow for the selected load case, plus the live/final
 optimized design), a convergence chart (compliance + volume fraction vs. iteration,
 Chart.js), and a log pane. A status bar shows mesh size, active DOFs, solver, iteration
