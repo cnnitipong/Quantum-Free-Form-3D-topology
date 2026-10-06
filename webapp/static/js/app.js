@@ -95,14 +95,28 @@ const ROLE_LABELS = {
   unused: "Unused",
 };
 
+// Functional BC role colours (slightly desaturated for the light, paper-like
+// viewport; same values as the .sw-* legend swatches in style.css).
 const ROLE_COLORS = {
-  domain: 0xa89f94,
-  fixed: 0x2563eb,
-  xfixed: 0x22d3ee,
-  yfixed: 0x14b8a6,
-  zfixed: 0x0d9488,
-  load: 0xf97316,
-  keepdom: 0x22c55e,
+  domain: 0xb5b5b1,
+  fixed: 0x3d63c4,
+  xfixed: 0x3fb0c4,
+  yfixed: 0x2f9c8e,
+  zfixed: 0x227a70,
+  load: 0xe07b39,
+  keepdom: 0x4caf6e,
+};
+// Viewport / design-mesh constants (nitipong.com palette: off-white paper,
+// mid-grey design, ink edges).
+const VIEW_COLORS = {
+  background: 0xf4f4f2,
+  hemiSky: 0xffffff,
+  hemiGround: 0x5a5a58,
+  design: 0x9a9a96,
+  designRunning: 0xa9a9a5,
+  designEdges: 0x141414,
+  selectedLoad: 0xc0392b,
+  loadArrow: 0xc0392b,
 };
 
 // Roles a single file can hold exclusively — assigning one of these to a
@@ -121,7 +135,7 @@ const designGroup = new THREE.Group();
 
 function initScene() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x2b2622);
+  scene.background = new THREE.Color(VIEW_COLORS.background);
 
   const rect = el.viewport.getBoundingClientRect();
   camera = new THREE.PerspectiveCamera(45, rect.width / Math.max(rect.height, 1), 0.1, 100000);
@@ -136,7 +150,7 @@ function initScene() {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
 
-  const hemi = new THREE.HemisphereLight(0xfff6e6, 0x4a4036, 1.1);
+  const hemi = new THREE.HemisphereLight(VIEW_COLORS.hemiSky, VIEW_COLORS.hemiGround, 1.1);
   scene.add(hemi);
   const dir1 = new THREE.DirectionalLight(0xffffff, 1.1);
   dir1.position.set(1, 1.4, 1);
@@ -216,7 +230,7 @@ function materialForRole(role, selected) {
   }
   if (role === "load") {
     return new THREE.MeshStandardMaterial({
-      color: selected ? 0xef4444 : color,
+      color: selected ? VIEW_COLORS.selectedLoad : color,
       transparent: true, opacity: selected ? 0.9 : 0.55,
       side: THREE.DoubleSide, roughness: 0.6,
     });
@@ -309,7 +323,7 @@ function updateArrowHelper() {
   // at the region centroid and the shaft extends outward from it — a small
   // load region no longer buries a tiny arrow inside the geometry.
   const tail = center.clone().addScaledVector(dir, -length);
-  arrowHelper = new THREE.ArrowHelper(dir, tail, length, 0xff3b3b, length * 0.25, length * 0.12);
+  arrowHelper = new THREE.ArrowHelper(dir, tail, length, VIEW_COLORS.loadArrow, length * 0.25, length * 0.12);
   scene.add(arrowHelper);
 }
 
@@ -614,6 +628,14 @@ const CATEGORY_LABELS = {
 };
 const CATEGORY_ORDER = ["paper", "beam", "truss-like", "advanced"];
 
+// Out-of-the-box path: the example select starts on DEFAULT_EXAMPLE, and an
+// example loaded while the QUBO optimizer (the UI default) is selected uses
+// the MeshControl in QUBO_QUICK_MESH, so Load -> Run with the default QUBO
+// settings finishes in about a minute (the block Hessian's cost grows quickly
+// with the mesh: the cantilever's own MeshControl 50 takes several minutes).
+const DEFAULT_EXAMPLE = "cantilever_beam";
+const QUBO_QUICK_MESH = { cantilever_beam: 25 };
+
 async function fetchExamples() {
   const resp = await fetch("/api/examples");
   const list = await resp.json();
@@ -643,6 +665,10 @@ async function fetchExamples() {
     }
     el.exampleSelect.appendChild(group);
   }
+  if (state.examples[DEFAULT_EXAMPLE]) {
+    el.exampleSelect.value = DEFAULT_EXAMPLE;
+    el.exampleDesc.textContent = state.examples[DEFAULT_EXAMPLE].description || "";
+  }
 }
 el.exampleSelect.addEventListener("change", () => {
   const ex = state.examples[el.exampleSelect.value];
@@ -657,6 +683,13 @@ async function loadExample(name) {
   }
   const data = await resp.json();
   applyPrefill(data.prefill, data.files);
+  const quick = QUBO_QUICK_MESH[name];
+  if (quick && el.pOptimizer.value === "QUBO" && Number(data.prefill.mesh_control) > quick) {
+    $("p-mesh_control").value = quick;
+    const ex = state.examples[name];
+    el.exampleDesc.textContent = `${ex ? ex.description : ""} MeshControl set to ${quick} for a quick QUBO run ` +
+      `(about a minute; the example's own value is ${data.prefill.mesh_control}).`;
+  }
 }
 
 function applyPrefill(prefill, filesMap) {
@@ -703,7 +736,15 @@ function applyPrefill(prefill, filesMap) {
   $("p-youngs_modulus").value = prefill.youngs_modulus;
   $("p-poisson_ratio").value = prefill.poisson_ratio;
   $("p-method").value = prefill.method;
-  $("p-optimizer").value = prefill.optimizer;
+  // Examples normally leave the optimizer to the user (prefill.optimizer is
+  // null), so the UI default (QUBO) or the user's choice is kept; an example
+  // that prescribes one still sets it.
+  if (prefill.optimizer) {
+    const want = String(prefill.optimizer).toUpperCase();
+    const opt = [...el.pOptimizer.options].find((o) => o.value === want && !o.disabled);
+    if (opt) el.pOptimizer.value = want;
+  }
+  updateQuantumPanelVisibility();
   $("p-penal").value = prefill.penal;
   $("p-rmin").value = prefill.rmin;
   $("p-loadtype").value = prefill.loadtype;
@@ -1148,7 +1189,7 @@ function setDesignGeometry(arrayBuffer, isFinal) {
   geom.computeVertexNormals();
   disposeGroupChildren(designGroup);
   const material = new THREE.MeshStandardMaterial({
-    color: isFinal ? 0xd9c9b0 : 0xc2b49e,
+    color: isFinal ? VIEW_COLORS.design : VIEW_COLORS.designRunning,
     metalness: 0.08,
     roughness: isFinal ? 0.42 : 0.6,
   });
@@ -1427,14 +1468,20 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("ligh
 // ---------------------------------------------------------------------
 // Chart
 // ---------------------------------------------------------------------
-// Chulalongkorn Architecture palette. Series colours for the light theme;
-// CHART_COLORS_DARK are lightened variants so the lines stay readable on the
-// warm-dark theme. Further series (if ever added) cycle through CHART_SERIES.
-const CHART_COLORS = { compliance: "#683817", volfrac: "#B38450", grid: "#DDD5C8" };
-const CHART_COLORS_DARK = { compliance: "#E3B07A", volfrac: "#FFDE59", grid: "#4A4139" };
-const CHART_SERIES = ["#683817", "#B38450", "#FFDE59", "#68543C", "#8C8C8C"]; // yellow needs a dark border
+// nitipong.com palette: ink compliance line, dashed muted-grey volume
+// fraction, hairline grid. CHART_COLORS_DARK are the inverted variants for the
+// dark theme. Further series (if ever added) cycle through CHART_SERIES.
+const CHART_COLORS = { compliance: "#141414", volfrac: "#8a8a8a", grid: "rgba(0,0,0,0.08)" };
+const CHART_COLORS_DARK = { compliance: "#ededeb", volfrac: "#a3a3a0", grid: "rgba(255,255,255,0.10)" };
+const CHART_SERIES = ["#141414", "#6b6b6b", "#DE5C8E", "#a3a3a0", "#3a3a3a"];
+const CHART_FONT_SANS = '"Inter", system-ui, -apple-system, "Helvetica Neue", sans-serif';
+const CHART_FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+const CHART_VOLFRAC_DASH = [5, 4];
 let chart;
 function initChart() {
+  Chart.defaults.font.family = CHART_FONT_SANS;
+  Chart.defaults.font.size = 11;
+  const axisTitleFont = { family: CHART_FONT_MONO, size: 10 };
   chart = new Chart(el.chartCanvas.getContext("2d"), {
     type: "line",
     data: {
@@ -1457,7 +1504,8 @@ function initChart() {
           backgroundColor: "transparent",
           yAxisID: "y1",
           pointRadius: 0,
-          borderWidth: 2,
+          borderWidth: 1.5,
+          borderDash: CHART_VOLFRAC_DASH,
           tension: 0.15,
         },
       ],
@@ -1468,20 +1516,20 @@ function initChart() {
       animation: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { title: { display: true, text: "Iteration" }, ticks: {}, grid: {} },
+        x: { title: { display: true, text: "ITERATION", font: axisTitleFont }, ticks: { maxRotation: 0, autoSkipPadding: 14 }, grid: {} },
         // Compliance/volume-fraction lines keep their fixed brand colors
         // (blue/orange, chosen to read fine on both light and dark
         // backgrounds) — only the theme-neutral text (axis titles/ticks,
         // legend) needs to track the active theme; see applyChartTheme().
-        y: { position: "left", grid: {}, title: { display: true, text: "Compliance" }, ticks: { color: CHART_COLORS.compliance } },
+        y: { position: "left", grid: {}, title: { display: true, text: "COMPLIANCE", font: axisTitleFont }, ticks: { color: CHART_COLORS.compliance } },
         y1: {
           position: "right",
-          title: { display: true, text: "Volume fraction" },
-          grid: { drawOnChartArea: false, color: "#DDD5C8" },
+          title: { display: true, text: "VOLUME FRACTION", font: axisTitleFont },
+          grid: { drawOnChartArea: false, color: CHART_COLORS.grid },
           ticks: { color: CHART_COLORS.volfrac },
         },
       },
-      plugins: { legend: { labels: {} } },
+      plugins: { legend: { labels: { boxWidth: 18, boxHeight: 1, font: { family: CHART_FONT_MONO, size: 10 } } } },
     },
   });
   applyChartTheme();
@@ -1494,8 +1542,8 @@ function initChart() {
 function currentThemeTextColors() {
   const styles = getComputedStyle(document.documentElement);
   return {
-    text: styles.getPropertyValue("--text").trim() || "#231F20",
-    muted: styles.getPropertyValue("--text-muted").trim() || "#68543C",
+    text: styles.getPropertyValue("--text").trim() || "#141414",
+    muted: styles.getPropertyValue("--text-muted").trim() || "#6b6b6b",
   };
 }
 
@@ -1512,7 +1560,8 @@ function applyChartTheme() {
   chart.data.datasets[0].borderColor = pal.compliance;
   chart.data.datasets[1].borderColor = pal.volfrac;
   chart.options.scales.y.ticks.color = pal.compliance;
-  chart.options.scales.y1.ticks.color = pal.volfrac;
+  // the dashed grey line is lighter than AA text allows, so its tick labels use --text-muted
+  chart.options.scales.y1.ticks.color = c.muted;
   chart.options.scales.x.grid.color = pal.grid;
   chart.options.scales.y.grid.color = pal.grid;
   chart.options.scales.y1.grid.color = pal.grid;
@@ -1769,6 +1818,17 @@ function projectTrussNode(node, dim) {
   return [node[0], node[1]];
 }
 
+// Truss canvas colours (light viewport): faint grey candidates, ink members,
+// BC-blue supports and load-orange arrows (same hues as the 3D legend).
+const TRUSS_COLORS = {
+  muted: "#6b6b6b",
+  candidate: "#8a8a86",
+  node: "#3a3a3a",
+  selected: "#141414",
+  support: "#3d63c4",
+  load: "#e07b39",
+};
+
 function drawTruss(problem, result) {
   const canvas = $("truss-canvas");
   if (!canvas) return;
@@ -1784,8 +1844,8 @@ function drawTruss(problem, result) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
   if (!problem || !problem.nodes || !problem.nodes.length) {
-    ctx.fillStyle = "#CDBFAB"; // truss canvas sits on the always-dark viewport
-    ctx.font = "13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.fillStyle = TRUSS_COLORS.muted; // truss canvas sits on the always-light viewport
+    ctx.font = `13px ${CHART_FONT_SANS}`;
     ctx.textAlign = "center";
     ctx.fillText("Choose a benchmark to preview its ground structure.", rect.width / 2, rect.height / 2);
     ctx.textAlign = "start";
@@ -1817,10 +1877,10 @@ function drawTruss(problem, result) {
   ];
   const pts = proj.map(toCanvas);
 
-  // The truss canvas is drawn on the always-dark warm viewport (--viewport-bg),
-  // so these are fixed light warm tones, independent of the page theme.
-  const mutedColor = "#A89F94";
-  const textColor = "#EFE6D6";
+  // The truss canvas is drawn on the always-light viewport (--viewport-bg),
+  // so these are fixed ink/grey tones, independent of the page theme.
+  const mutedColor = TRUSS_COLORS.candidate;
+  const textColor = TRUSS_COLORS.node;
 
   // 1) candidate bars, faint
   ctx.lineCap = "round";
@@ -1844,7 +1904,7 @@ function drawTruss(problem, result) {
       if (!result.on[i]) return;
       const [a, b] = bar;
       const areaFrac = areas ? Math.max(areas[i] / maxArea, 0.15) : 1;
-      ctx.strokeStyle = "#FFDE59";
+      ctx.strokeStyle = TRUSS_COLORS.selected;
       ctx.lineWidth = 2 + areaFrac * 6;
       ctx.beginPath();
       ctx.moveTo(pts[a][0], pts[a][1]);
@@ -1863,7 +1923,7 @@ function drawTruss(problem, result) {
 
   // 4) supports: a small triangle marker under each supported node
   const supportedNodes = new Set(supports.map((s) => s[0]));
-  ctx.fillStyle = "#E3B07A";
+  ctx.fillStyle = TRUSS_COLORS.support;
   supportedNodes.forEach((ni) => {
     const p = pts[ni];
     if (!p) return;
@@ -1877,8 +1937,8 @@ function drawTruss(problem, result) {
   });
 
   // 5) loads: arrows in the (projected) force direction
-  ctx.strokeStyle = "#FF8A3D";
-  ctx.fillStyle = "#FF8A3D";
+  ctx.strokeStyle = TRUSS_COLORS.load;
+  ctx.fillStyle = TRUSS_COLORS.load;
   ctx.lineWidth = 2;
   const arrowLen = 28;
   for (const load of loads) {

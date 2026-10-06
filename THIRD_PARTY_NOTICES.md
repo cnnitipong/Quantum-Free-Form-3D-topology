@@ -1,6 +1,6 @@
 # Third-party notices
 
-FreeTO-Python is a Python port and extension of other people's work. Their licences are kept here as they require.
+QFF-3D (the `freeto` package, FreeTO-Python, and its web app) is a Python port and extension of other people's work. Their licences are kept here as they require.
 
 ## FreeTO (MATLAB) - MIT License
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Double-click launcher for macOS Finder: creates/activates a virtual
 # environment, installs dependencies (only when needed), and starts the
-# FreeTO-Python web app, opening it in the default browser.
+# QFF-3D web app (Quantum Free-Form 3D Topology Optimisation, built on
+# FreeTO; Python package `freeto`), opening it in the default browser.
 #
 #  - Finds a real Python 3.10-3.13 interpreter, preferring one of those exact
 #    versions over whatever "python3" happens to resolve to (see PY_DISCOVERY
@@ -10,7 +11,8 @@
 #    "install developer tools?" dialog instead of running anything.
 #  - Creates the virtual environment OUTSIDE this project folder, at
 #    ~/Library/Application Support/FreeTO-Python/venv (override with the
-#    FREETO_VENV environment variable) -- this folder itself may live in a
+#    FREETO_VENV environment variable; the folder name is kept from
+#    FreeTO-Python so an existing install is reused) -- this folder itself may live in a
 #    long, spaced, iCloud-synced Documents path, which is a bad place for a
 #    venv (large binary files, "Files On-Demand" eviction).
 #  - Installs requirements.txt only when it is new or has changed since the
@@ -119,7 +121,8 @@ fi
 # 4. Run.
 # ---------------------------------------------------------------------
 echo
-echo "Starting FreeTO-Python web app…"
+printf '\033]0;QFF-3D - Quantum Free-Form 3D Topology Optimisation\007'
+echo "Starting QFF-3D web app (Quantum Free-Form 3D Topology Optimisation)…"
 "$VPY" -m webapp.server --port 8000 --open
 SERVER_EXIT=$?
 

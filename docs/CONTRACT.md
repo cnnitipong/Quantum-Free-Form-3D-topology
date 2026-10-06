@@ -26,7 +26,7 @@ freeto_py/
   tests/
   requirements.txt
   README.md
-  Start FreeTO (macOS).command, run_app.sh (Linux), Start FreeTO (Windows).bat
+  Start QFF-3D (macOS).command, run_app.sh (Linux), Start QFF-3D (Windows).bat
 ```
 
 ## Core API (the web app codes against exactly this)

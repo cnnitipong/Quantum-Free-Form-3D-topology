@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Launch the FreeTO-Python web app on Linux.
+# Launch the QFF-3D web app (Quantum Free-Form 3D Topology Optimisation,
+# built on FreeTO; Python package `freeto`) on Linux.
 #
 #  - Finds a real Python 3.10-3.13 interpreter, preferring one of those exact
 #    versions on PATH over whatever generic "python3" resolves to (which
@@ -7,7 +8,8 @@
 #    that yet -- see requirements.txt).
 #  - Creates the virtual environment OUTSIDE this project folder, at
 #    ${XDG_DATA_HOME:-~/.local/share}/FreeTO-Python/venv (override with the
-#    FREETO_VENV environment variable) -- this folder itself may live in a
+#    FREETO_VENV environment variable; the folder name is kept from
+#    FreeTO-Python so an existing install is reused) -- this folder itself may live in a
 #    long, spaced, cloud-synced path, which is a bad place for a venv.
 #  - Installs requirements.txt only when it is new or has changed since the
 #    last successful install (compared byte-for-byte with `cmp` against a
@@ -81,5 +83,5 @@ else
   echo "Dependencies already installed and up to date; skipping install (offline-friendly)."
 fi
 
-echo "Starting FreeTO-Python web app…"
+echo "Starting QFF-3D web app (Quantum Free-Form 3D Topology Optimisation)…"
 exec "$VPY" -m webapp.server --port 8000 --open "$@"

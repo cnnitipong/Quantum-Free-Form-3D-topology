@@ -1,12 +1,25 @@
-# FreeTO-Python
+# QFF-3D: Quantum Free-Form 3D Topology Optimisation
 
-A Python port of FreeTO (O. Ibhadode, Y.-F. Fu, A. Qureshi, "FreeTO - Freeform 3D topology optimization
+QFF-3D is built on FreeTO (O. Ibhadode, Y.-F. Fu, A. Qureshi, "FreeTO - Freeform 3D topology optimization
 using a structured mesh with smooth boundaries in Matlab", *Advances in Engineering Software* 198 (2024) 103790,
-doi:[10.1016/j.advengsoft.2024.103790](https://doi.org/10.1016/j.advengsoft.2024.103790)), extended with a
+doi:[10.1016/j.advengsoft.2024.103790](https://doi.org/10.1016/j.advengsoft.2024.103790); MIT licence): a Python
+port of FreeTO (the `freeto` package, also called FreeTO-Python below), extended with a quantum-annealing-compatible
 QUBO design update that can be solved by exact enumeration, simulated annealing, tabu search, greedy descent or
-simulated QAOA, plus a local web app for driving it.
+simulated QAOA, plus a local web app, **QFF-3D**, for driving it. The web app selects the QUBO design update by
+default (simulated-annealing backend, block Hessian: the settings of the paper's QUBO-SA (block) runs); OC and MMA
+remain one click away.
 
-![FreeTO-Python web app](webapp/screenshots/04_done.png)
+Source: <https://github.com/cnnitipong/Quantum-Free-Form-3D-topology>
+
+```bash
+git clone https://github.com/cnnitipong/Quantum-Free-Form-3D-topology.git
+cd Quantum-Free-Form-3D-topology
+```
+
+The Python package keeps the name `freeto` (imports, CLI `python -m freeto`, env vars `FREETO_*`, job and
+file formats are unchanged), so code and the paper's data package written against FreeTO-Python keep working.
+
+![QFF-3D web app](webapp/screenshots/04_done.png)
 
 Developed by Nitipong Praphaphankul, Architectural Intelligence (A.I.) Research Group, Faculty of Architecture,
 Chulalongkorn University. The QUBO method and its benchmark against MMA are described in the manuscript
@@ -18,7 +31,7 @@ See `docs/CONTRACT.md` for the shared interface between the numerical core and t
 
 ## Quick start
 
-The fastest way to use FreeTO-Python is the web app: install Python once, then double-click
+The fastest way to use QFF-3D is the web app: install Python once, then double-click
 a launcher. It creates its own environment the first time and reuses it after that - you
 never need to open a terminal.
 
@@ -27,7 +40,7 @@ never need to open a terminal.
 1. Install **Python 3.12** from <https://www.python.org/downloads/windows/>. On the first
    install-wizard screen, tick **"Install launcher for all users"** (this gives you the `py`
    command the launcher uses); ticking **"Add python.exe to PATH"** is optional and not needed.
-2. Double-click **`Start FreeTO (Windows).bat`**.
+2. Double-click **`Start QFF-3D (Windows).bat`**.
 3. **First run only:** Windows SmartScreen may show "Windows protected your PC" because the
    file has no publisher signature. Click **More info**, then **Run anyway**. (This is a
    one-time warning for any downloaded/emailed `.bat` file, not specific to this app.)
@@ -39,14 +52,14 @@ never need to open a terminal.
 
 1. Install **Python 3.12** from <https://www.python.org/downloads/macos/> (or, with
    Homebrew, `brew install python@3.12`).
-2. Double-click **`Start FreeTO (macOS).command`**.
+2. Double-click **`Start QFF-3D (macOS).command`**.
 3. **First run only:** macOS will likely refuse to open it ("cannot be opened because it is
    from an unidentified developer"). On macOS 15 (Sequoia) and newer, Control-click no longer
    bypasses this - instead go to **System Settings → Privacy & Security**, scroll down to the
    blocked-app notice, and click **Open Anyway** (you'll be asked once more to confirm). On
    older macOS, Control-click (or right-click) the file → **Open** → **Open** in the dialog.
    Either way this is only needed once. Alternatively, from a terminal in this folder:
-   `chmod +x "Start FreeTO (macOS).command" && xattr -dr com.apple.quarantine .`
+   `chmod +x "Start QFF-3D (macOS).command" && xattr -dr com.apple.quarantine .`
 4. The first launch installs dependencies (a minute or two); later launches are instant and
    work offline.
 
@@ -54,7 +67,8 @@ never need to open a terminal.
 
 Both launchers create a virtual environment **outside** this project folder - this folder
 may be a long, spaced, cloud-synced Documents path, which is a bad place for a Python
-environment (large binary files, sync tools that can evict or re-upload it):
+environment (large binary files, sync tools that can evict or re-upload it). The folder keeps
+the name `FreeTO-Python`, so an environment created before the QFF-3D rename is reused:
 
 | Platform | Default location | Override |
 |---|---|---|
@@ -114,7 +128,7 @@ to ~1e-12 (see "Verification" below).
 Use a virtual environment (Python 3.10+):
 
 ```bash
-cd freeto_py
+cd Quantum-Free-Form-3D-topology     # or wherever you cloned/unpacked it
 python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt      # core only: pip install numpy scipy scikit-image pyamg
@@ -258,12 +272,14 @@ exact, floating-point quantities agree to ~1e-11 relative or better over all ite
 ## Web app
 
 A local, single-user web app (FastAPI backend + a vanilla-JS/three.js frontend, no build
-step) for setting up, running, and visualizing FreeTO-Python jobs interactively.
+step) for setting up, running, and visualizing `freeto` jobs interactively. It is branded **QFF-3D**
+(Quantum Free-Form 3D Topology Optimisation); the footer credits FreeTO (Ibhadode, Fu & Qureshi, 2024, MIT
+licence) and links to <https://github.com/cnnitipong/Quantum-Free-Form-3D-topology>.
 
 ### Launching
 
 ```bash
-cd freeto_py
+cd Quantum-Free-Form-3D-topology     # or wherever you cloned/unpacked it
 python -m webapp.server --port 8000 --open
 ```
 
@@ -271,8 +287,8 @@ or use one of the launcher scripts (see "Quick start" above for first-run notes 
 their virtual environment lives), which install `requirements.txt` only on the first run -
 or again if `requirements.txt` changes - and start the server:
 
-- Windows: double-click `Start FreeTO (Windows).bat`
-- macOS: double-click `Start FreeTO (macOS).command`
+- Windows: double-click `Start QFF-3D (Windows).bat`
+- macOS: double-click `Start QFF-3D (macOS).command`
 - Linux: `./run_app.sh`
 
 By default the app stores uploads and job results under `~/.freeto_web/`. Override this
@@ -339,15 +355,22 @@ and **Study**.
 truss-like / advanced), drag-and-drop STL upload with a per-file role selector
 (Domain / Fixed variants / Load region / Keep domain / Unused) and visibility toggle, a
 load-case table (file + Fx/Fy/Fz per row - a file can be reused across rows), all FreeTO
-parameters including an optimizer select with **OC / MMA / QUBO**, and Run/Stop/Download
-controls. Picking **QUBO** reveals a **Quantum settings** group - backend (populated from
+parameters including an optimizer select listing **QUBO** first (selected by default), then **OC / MMA**,
+and Run/Stop/Download controls. With QUBO selected (the default) the **QUBO design update** group is
+shown, preset to backend `sa` and Hessian `block` (the paper's QUBO-SA (block) settings; QAOA stays
+selectable but is not the default, as the state-vector simulator is slow). The group holds the backend (populated from
 `/api/quantum/backends`, unavailable ones shown disabled with an install/token hint),
 Hessian mode, volume handling (bisection/penalty), frontier fraction, block size, sweeps,
 SA/tabu reads, QAOA layers (p) and shots, seed, and (under "Advanced") the remaining
 `QUBOOptions` fields (γ defaults to the core's 0; the move limit / accept-if-improves guard /
 load protection / QAOA polish safeguards of the QUBO update are exposed too) - every field has a tooltip and a sensible default from
 `docs/QUANTUM_API.md`. If `freeto.quantum` isn't installed, the QUBO option is disabled in
-the optimizer select instead. Right panel: a three.js viewport (inputs colour-coded by
+the optimizer select and the UI falls back to OC. Loading an example keeps the selected optimizer
+(examples do not prescribe one; `prefill.optimizer` is `null`). Note that the *job API* default is
+unchanged: a `POST /api/jobs` request that omits `optimizer` still runs OC (as in `docs/CONTRACT.md`);
+only the web UI defaults to QUBO. The example select starts on the **cantilever beam**; loaded while QUBO is
+selected it uses MeshControl 25 instead of the example's 50 (the block Hessian's cost grows quickly with
+the mesh), so Load then Run with the default QUBO settings finishes in about a minute. Right panel: a three.js viewport (inputs colour-coded by
 role, with a force-direction arrow for the selected load case, plus the live/final
 optimized design), a convergence chart (compliance + volume fraction vs. iteration,
 Chart.js), and a log pane. A status bar shows mesh size, active DOFs, solver, iteration
@@ -557,4 +580,4 @@ of the QUANTUM extension.
 
 ## License
 
-MIT (see `LICENSE`). FreeTO-Python ports the MIT-licensed FreeTO and re-implements the BSD-licensed `intriangulation` test; their notices, and those of the bundled three.js and Chart.js, are in `THIRD_PARTY_NOTICES.md`. If you use this code, please cite the FreeTO paper above and the QUBO manuscript.
+MIT (see `LICENSE`). QFF-3D / FreeTO-Python ports the MIT-licensed FreeTO and re-implements the BSD-licensed `intriangulation` test; their notices, and those of the bundled three.js and Chart.js, are in `THIRD_PARTY_NOTICES.md`. If you use this code, please cite the FreeTO paper above and the QUBO manuscript.

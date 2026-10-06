@@ -1,4 +1,4 @@
-"""FastAPI TestClient tests for the FreeTO-Python web app.
+"""FastAPI TestClient tests for the QFF-3D web app (drives the `freeto` package).
 
 These exercise the whole backend surface (upload, examples, job lifecycle,
 downloads, validation) against whichever core is active — the real
@@ -321,7 +321,33 @@ class TestFrontendServed:
     def test_index_html(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "FreeTO" in resp.text
+        assert "<title>QFF-3D" in resp.text
+        assert "Quantum Free-Form 3D Topology Optimisation" in resp.text
+        # credit to the upstream work + author line + repository link
+        assert "Built on FreeTO (Ibhadode, Fu &amp; Qureshi, 2024, MIT licence)" in resp.text
+        assert ("QFF-3D · Nitipong Praphaphankul · Architectural Intelligence Research Group, "
+                "Chulalongkorn University") in resp.text
+        assert "https://github.com/cnnitipong/Quantum-Free-Form-3D-topology" in resp.text
+        assert "FreeTO-Python" not in resp.text
+
+    def test_index_quantum_first(self, client):
+        """The Setup tab lists the QUBO design update first and selects it, with the
+        QUBO settings card visible and preset to the paper's QUBO-SA (block) options."""
+        html = client.get("/").text
+        sel = html[html.index('<select id="p-optimizer">'):]
+        sel = sel[:sel.index("</select>")]
+        values = [part.split('"')[0] for part in sel.split('<option value="')[1:]]
+        assert values == ["QUBO", "OC", "MMA"]
+        assert '<option value="QUBO" selected>' in sel
+        assert '<fieldset class="card" id="quantum-settings-card">' in html  # not hidden
+        assert '<option value="sa" selected>' in html
+        assert '<option value="block" selected>' in html
+
+    def test_example_prefill_keeps_ui_optimizer(self, client):
+        """Examples do not prescribe an optimizer (prefill.optimizer is None), so loading
+        one keeps the UI's selection (QUBO by default)."""
+        data = client.post("/api/examples/cantilever_beam/load").json()
+        assert data["prefill"]["optimizer"] is None
 
     def test_static_vendor_files_present(self, client):
         for path in (

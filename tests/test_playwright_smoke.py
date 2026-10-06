@@ -1,4 +1,4 @@
-"""Headless-browser smoke test for the FreeTO-Python web app.
+"""Headless-browser smoke test for the QFF-3D web app.
 
 Starts a real server subprocess, drives it with Playwright/Chromium exactly
 like a person would (load page -> load GE example -> shrink the job to a
@@ -117,6 +117,14 @@ def test_browser_smoke(tmp_path):
             has_qubo = page.eval_on_selector(
                 "#p-optimizer option[value='QUBO']", "o => !o.disabled")
             if has_qubo:
+                # QUBO is listed first and selected by default (also after
+                # loading an example), with its settings card visible and
+                # preset to the paper's QUBO-SA (block) options.
+                assert page.eval_on_selector("#p-optimizer", "e => e.options[0].value") == "QUBO"
+                assert page.eval_on_selector("#p-optimizer", "e => e.value") == "QUBO"
+                assert page.is_visible("#quantum-settings-card")
+                assert page.eval_on_selector("#qubo-backend", "e => e.value") == "sa"
+                assert page.eval_on_selector("#qubo-hessian", "e => e.value") == "block"
                 page.select_option("#p-optimizer", "QUBO")
                 page.evaluate("document.getElementById('quantum-advanced-details').open = true")
             for width in (1440, 1024):

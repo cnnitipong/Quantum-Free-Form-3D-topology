@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>FreeTO-Python</title>
+<title>QFF-3D · Quantum Free-Form 3D Topology Optimisation</title>
+<meta name="description" content="QFF-3D: freeform 3D topology optimisation with a quantum-annealing-compatible QUBO design update. Built on FreeTO (Ibhadode, Fu &amp; Qureshi, 2024, MIT licence)." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" />
 <link rel="stylesheet" href="/static/css/style.css" />
 <script type="importmap">
 {
@@ -21,7 +22,11 @@
 <body>
 <header id="app-header">
   <div class="brand">
-    <span class="brand-title">FreeTO<span class="accent">-Python</span></span>
+    <span class="brand-mark" aria-hidden="true">Q3</span>
+    <span class="brand-text">
+      <span class="brand-title" title="QFF-3D: Quantum Free-Form 3D Topology Optimisation">QFF-3D</span>
+      <span class="brand-sub">Quantum Free-Form 3D Topology Optimisation</span>
+    </span>
     <span id="core-badge" class="badge" title="Which numerical core is active">core: …</span>
   </div>
   <div id="status-bar" class="status-bar">
@@ -33,7 +38,7 @@
     <span id="status-qubo" class="status-qubo" hidden></span>
     <span id="status-audit" class="status-audit" hidden title="Live connectivity of the binary design (QUBO runs) / final physics check"></span>
   </div>
-  <button id="theme-toggle" class="icon-btn" title="Toggle light/dark theme">◐</button>
+  <button id="theme-toggle" class="icon-btn" type="button" title="Toggle light/dark theme">Theme</button>
 </header>
 
 <div id="core-banner" class="core-banner" hidden></div>
@@ -87,18 +92,19 @@
       <fieldset class="card">
         <legend>Parameters</legend>
         <div class="grid2">
+          <label class="span-all" title="Design update. QUBO (default) solves a binary quadratic model each iteration with a quantum-annealing-compatible backend (simulated annealing by default); OC and MMA are the classical continuous updates.">Optimizer
+            <select id="p-optimizer">
+              <option value="QUBO" selected>QUBO - quantum-ready design update</option>
+              <option value="OC">OC - optimality criteria (classical)</option>
+              <option value="MMA">MMA - method of moving asymptotes (classical)</option>
+            </select>
+          </label>
           <label>MeshControl<input id="p-mesh_control" type="number" min="4" step="1" value="80"></label>
           <label>volfrac<input id="p-volfrac" type="number" min="0.01" max="0.99" step="0.01" value="0.3"></label>
           <label>Young's modulus (Pa)<input id="p-youngs_modulus" type="number" step="any" value="1"></label>
           <label>Poisson ratio<input id="p-poisson_ratio" type="number" min="0" max="0.49" step="0.01" value="0.3"></label>
           <label>Method
             <select id="p-method"><option>SIMP</option><option>SEMDOT</option></select>
-          </label>
-          <label>Optimizer
-            <select id="p-optimizer">
-              <option>OC</option><option>MMA</option>
-              <option value="QUBO">QUBO (quantum)</option>
-            </select>
           </label>
           <label>Penalty<input id="p-penal" type="number" min="1" step="0.1" value="3"></label>
           <label>Filter radius<input id="p-rmin" type="number" min="0.1" step="0.1" value="1.5"></label>
@@ -122,22 +128,23 @@
         </div>
       </fieldset>
 
-      <fieldset class="card" id="quantum-settings-card" hidden>
-        <legend>Quantum settings</legend>
+      <fieldset class="card" id="quantum-settings-card">
+        <legend>QUBO design update</legend>
+        <p class="muted small qubo-intro">Defaults are the paper's QUBO-SA (block) settings: simulated annealing on the QUBO with the exact per-block Hessian. Its cost grows quickly with the mesh (the default cantilever at MeshControl 25 takes about a minute, at 36 about three). QAOA (state-vector simulator) stays selectable but is slow.</p>
         <p id="quantum-unavailable-msg" class="muted small" hidden></p>
         <div id="quantum-settings-body">
           <div class="grid2">
             <label title="Which solver actually finds each QUBO's minimum-energy assignment. 'auto' picks exact for tiny free sets, else simulated annealing. Cloud backends (dwave_*, ibm) need the optional SDK and a token; unavailable ones are disabled here with a hint.">
               Backend
-              <select id="qubo-backend"><option value="auto">auto</option></select>
+              <select id="qubo-backend"><option value="auto">auto</option><option value="sa" selected>sa (classical)</option></select>
             </label>
             <label title="How the second-order (coupling) term of the QUBO is built. auto picks block with a direct solver, diag with AMG. none = first-order only (the BESO/sorting control).">
               Hessian mode
               <select id="qubo-hessian">
                 <option value="auto">auto</option>
-                <option value="block">block (exact, per-block)</option>
-                <option value="diag">diag (cheap, sparse)</option>
-                <option value="none">none (sorting/BESO control)</option>
+                <option value="block" selected>block (exact)</option>
+                <option value="diag">diag (cheap)</option>
+                <option value="none">none (BESO control)</option>
               </select>
             </label>
             <label title="How the volume constraint is enforced. bisection = exact volume via a λ search (default, cheap backends). penalty = fixed λ from OC + a quadratic penalty + greedy repair (use for expensive backends: QPU, QAOA).">
@@ -180,15 +187,15 @@
             <summary class="muted small">Advanced</summary>
             <div class="grid2">
               <label title="Penalty weight λ_q for volume='penalty', in units of max|dc|/v_max². Leave blank for the backend default (2.0).">
-                λ_q (volume penalty)
+                <span><span class="nocase">λ<sub>q</sub></span> (volume penalty)</span>
                 <input id="qubo-lambda_q" type="number" step="any" placeholder="auto">
               </label>
               <label title="Perimeter / anti-checkerboard regulariser weight γ, in units of the mean |g| of the solid elements. 0 (the core default) disables it; the study (F5) shows γ>0 worsens the crisp result, so only raise it deliberately.">
-                γ (perimeter weight)
+                <span><span class="nocase">γ</span> (perimeter weight)</span>
                 <input id="qubo-gamma" type="number" min="0" step="0.01" placeholder="0 (default)">
               </label>
               <label title="Hamming move-penalty μ against the previous binary design. 0 by default — the free-set/frontier selection already provides the trust region.">
-                Move penalty (μ)
+                <span>Move penalty (<span class="nocase">μ</span>)</span>
                 <input id="qubo-move_penalty" type="number" min="0" step="0.01" value="0">
               </label>
               <label title="How free elements are grouped into blocks: 'morton' = spatially compact (Z-order curve, better coupling capture); 'rank' = grouped by sensitivity rank (cheaper, weaker coupling capture).">
@@ -560,6 +567,13 @@
 </main>
 
 </div><!-- #tab-content -->
+
+<footer id="app-footer" class="app-footer">
+  <span class="foot-credit">QFF-3D · Nitipong Praphaphankul · Architectural Intelligence Research Group, Chulalongkorn University</span>
+  <span class="foot-sep" aria-hidden="true"></span>
+  <span class="foot-about">Built on FreeTO (Ibhadode, Fu &amp; Qureshi, 2024, MIT licence)</span>
+  <a class="foot-link" href="https://github.com/cnnitipong/Quantum-Free-Form-3D-topology" target="_blank" rel="noopener">github.com/cnnitipong/Quantum-Free-Form-3D-topology</a>
+</footer>
 
 <div id="lightbox" class="lightbox" hidden>
   <button id="lightbox-close" class="btn small" type="button" title="Close (Esc)">&times; close</button>

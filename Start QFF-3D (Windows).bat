@@ -1,9 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
-title FreeTO-Python
+title QFF-3D - Quantum Free-Form 3D Topology Optimisation
 
 REM ============================================================================
-REM Launch the FreeTO-Python web app on Windows.
+REM Launch the QFF-3D web app (Quantum Free-Form 3D Topology Optimisation,
+REM built on FreeTO; Python package `freeto`) on Windows.
 REM
 REM  - Finds a real Python 3.10-3.13 interpreter (prefers the "py" launcher;
 REM    refuses the Microsoft Store "python.exe" alias, which cannot run
@@ -11,7 +12,8 @@ REM    anything). Python 3.14+ is accepted as a last resort, with a warning,
 REM    because the optional "pyamg" fast solver has no 3.14 wheels yet.
 REM  - Creates the virtual environment OUTSIDE this project folder, at
 REM    %LOCALAPPDATA%\FreeTO-Python\venv (override with the FREETO_VENV
-REM    environment variable) -- this folder's own path may be a long, spaced,
+REM    environment variable; the folder name is kept from FreeTO-Python so
+REM    an existing install is reused) -- this folder's own path may be a long, spaced,
 REM    OneDrive-synced Documents path, which is a bad place for a venv.
 REM  - Installs requirements.txt only when it is new or has changed since the
 REM    last successful install (compared byte-for-byte with `fc /b` against a
@@ -78,7 +80,7 @@ if not defined PY (
 )
 
 if defined PYWARN (
-  echo WARNING: only Python 3.14+ was found. FreeTO-Python will still run, but
+  echo WARNING: only Python 3.14+ was found. QFF-3D will still run, but
   echo the optional "amg" fast solver ^(pyamg^) has no Python 3.14 wheels yet and
   echo will be skipped automatically. To avoid this, install Python 3.12 from
   echo https://www.python.org/downloads/windows/ alongside your current Python.
@@ -147,7 +149,7 @@ REM ----------------------------------------------------------------------
 REM 4. Run.
 REM ----------------------------------------------------------------------
 echo.
-echo Starting FreeTO-Python web app...
+echo Starting QFF-3D web app (Quantum Free-Form 3D Topology Optimisation)...
 "%VPY%" -m webapp.server --port 8000 --open
 if errorlevel 1 (
   echo.

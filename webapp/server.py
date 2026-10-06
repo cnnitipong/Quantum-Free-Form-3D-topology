@@ -1,4 +1,6 @@
-"""FastAPI backend for the FreeTO-Python web app.
+"""FastAPI backend for the QFF-3D web app (Quantum Free-Form 3D Topology
+Optimisation), which drives the `freeto` package (built on FreeTO by Ibhadode,
+Fu & Qureshi, 2024, MIT licence).
 
 Run with:
     python -m webapp.server --port 8000 --open
@@ -429,7 +431,7 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
     registry = FileRegistry(uploads_dir)
     manager = JobManager(jobs_dir)
 
-    app = FastAPI(title="FreeTO-Python", version="0.1.0")
+    app = FastAPI(title="QFF-3D: Quantum Free-Form 3D Topology Optimisation", version="0.1.0")
     app.state.registry = registry
     app.state.manager = manager
     app.state.workdir = workdir
@@ -544,7 +546,10 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             "youngs_modulus": kwargs.get("youngs_modulus", 1.0),
             "poisson_ratio": kwargs.get("poisson_ratio", 0.3),
             "method": kwargs.get("method", "SIMP"),
-            "optimizer": kwargs.get("optimizer", "OC"),
+            # None unless the example prescribes an optimizer: the web UI then
+            # keeps its own selection (QUBO by default). The job API default
+            # (JobCreateRequest.optimizer, used when a request omits it) stays "OC".
+            "optimizer": kwargs.get("optimizer"),
             "penal": kwargs.get("penal", 3.0),
             "rmin": kwargs.get("rmin", 1.5),
             "loadtype": kwargs.get("loadtype", "distributed"),
@@ -1088,13 +1093,13 @@ def _pick_port(host: str, start: int, tries: int = 10) -> int:
             return p
     raise SystemExit(
         f"ERROR: every port from {start} to {start + tries - 1} on {host} is already in "
-        f"use; close the other FreeTO-Python window (or any other server on one of those "
+        f"use; close the other QFF-3D window (or any other server on one of those "
         f"ports) or pass --port to pick a different one."
     )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="FreeTO-Python web app server")
+    parser = argparse.ArgumentParser(description="QFF-3D (Quantum Free-Form 3D Topology Optimisation) web app server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--workdir", default=None, help="Working directory for uploads/results (default ~/.freeto_web)")
@@ -1113,7 +1118,7 @@ def main():
     args.port = _pick_port(args.host, args.port)
     url = f"http://{args.host}:{args.port}/"
     print("=" * max(60, len(url) + 22), flush=True)
-    print(f"  FreeTO-Python web app:  {url}", flush=True)
+    print(f"  QFF-3D web app:  {url}", flush=True)
     print("  (Ctrl+C in this window stops the server)", flush=True)
     print("=" * max(60, len(url) + 22), flush=True)
 
