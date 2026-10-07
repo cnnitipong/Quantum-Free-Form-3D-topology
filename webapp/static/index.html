@@ -5,16 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>QFF-3D · Quantum Free-Form 3D Topology Optimisation</title>
 <meta name="description" content="QFF-3D: freeform 3D topology optimisation with a quantum-annealing-compatible QUBO design update. Built on FreeTO (Ibhadode, Fu &amp; Qureshi, 2024, MIT licence)." />
+<!-- inline icon: no request to /favicon.ico, which is outside the app under a proxy prefix -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111'/%3E%3Ctext x='16' y='21.5' font-family='Arial,sans-serif' font-size='14' font-weight='700' fill='%23fff' text-anchor='middle'%3EQ3%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" />
-<link rel="stylesheet" href="/static/css/style.css" />
+<link rel="stylesheet" href="./static/css/style.css" />
 <script type="importmap">
 {
   "imports": {
-    "three": "/static/vendor/three/three.module.js",
-    "three/addons/controls/OrbitControls.js": "/static/vendor/three/OrbitControls.js",
-    "three/addons/loaders/STLLoader.js": "/static/vendor/three/STLLoader.js"
+    "three": "./static/vendor/three/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./static/vendor/three/OrbitControls.js",
+    "three/addons/loaders/STLLoader.js": "./static/vendor/three/STLLoader.js"
   }
 }
 </script>
@@ -70,6 +72,7 @@
           </label>
           <button id="paper-reset-btn" class="btn small" type="button" title="Reset every parameter to the paper's value for this example and paper run (mesh, volume fraction, material, optimizer, QUBO options, seed 0, iteration cap 300, evaluation).">Paper settings</button>
         </div>
+        <p id="public-limit-note" class="muted small public-limit-note" hidden></p>
         <p id="paper-note" class="muted small">Paper settings (manuscript Table 1, suite quick2): MeshControl, volume fraction, E = 210 GPa, &nu; = 0.3, q = 3, r<sub>min</sub> = 1.5, cap 300 iterations, seed 0, refined binary voxel evaluation f = 2.</p>
       </fieldset>
 
@@ -81,6 +84,7 @@
             browse<input id="file-input" type="file" accept=".stl,.STL" multiple hidden />
           </label>
         </div>
+        <p id="upload-limit-note" class="muted small" hidden></p>
         <div id="file-list" class="file-list"></div>
       </fieldset>
 
@@ -493,7 +497,7 @@
   <section id="study-left-panel" class="side-panel">
     <div class="panel-scroll">
       <fieldset class="card" id="study-unavailable-card" hidden>
-        <legend>Study module unavailable</legend>
+        <legend id="study-unavailable-legend">Study module unavailable</legend>
         <p id="study-unavailable-msg" class="muted small"></p>
       </fieldset>
 
@@ -619,6 +623,7 @@
   <span class="foot-sep" aria-hidden="true"></span>
   <span class="foot-about">Built on FreeTO (Ibhadode, Fu &amp; Qureshi, 2024, MIT licence)</span>
   <a class="foot-link" href="https://github.com/cnnitipong/Quantum-Free-Form-3D-topology" target="_blank" rel="noopener">github.com/cnnitipong/Quantum-Free-Form-3D-topology</a>
+  <span id="public-notice" class="foot-public" hidden>Shared demo server: one job at a time, runs are deleted after 2 hours. For the full version run it locally (<a href="https://github.com/cnnitipong/Quantum-Free-Form-3D-topology" target="_blank" rel="noopener">GitHub</a>).</span>
 </footer>
 
 <div id="lightbox" class="lightbox" hidden>
@@ -626,7 +631,7 @@
   <img id="lightbox-img" alt="" />
 </div>
 
-<script src="/static/vendor/chartjs/chart.umd.min.js"></script>
-<script type="module" src="/static/js/app.js"></script>
+<script src="./static/vendor/chartjs/chart.umd.min.js"></script>
+<script type="module" src="./static/js/app.js"></script>
 </body>
 </html>

@@ -7,11 +7,19 @@ Run with:
 
 Endpoints are documented inline below; everything is JSON except STL/NPZ
 downloads and the static frontend.
+
+Hosting: every route lives at the root and the frontend only uses relative
+URLs, so the app works unchanged behind a reverse proxy that serves it under a
+prefix and strips that prefix (e.g. https://nitipong.com/qff3d/ ->
+https://<space>.hf.space/).  QFF3D_ROOT_PATH (or an X-Forwarded-Prefix request
+header) only sets the ASGI root_path, used by FastAPI's /docs page.
+QFF3D_PUBLIC=1 enables the limits of the shared demo server (webapp/public.py).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import logging
 import json
@@ -25,7 +33,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -59,6 +67,15 @@ from webapp.core_loader import (
 )
 from webapp.jobs import JobManager
 from webapp import paper_presets
+from webapp.public import (
+    LOCAL_VERSION_MSG,
+    LimitError,
+    PublicConfig,
+    check_capacity,
+    check_job_request,
+    check_truss_request,
+    client_ip,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("freeto.webapp.server")
@@ -90,6 +107,9 @@ STATIC_DIR = WEBAPP_DIR / "static"
 EXAMPLES_STL_DIR = PACKAGE_ROOT / "examples" / "STLs"
 
 DEFAULT_WORKDIR = Path(os.environ.get("FREETO_WEBAPP_DIR", "~/.freeto_web")).expanduser()
+#: ASGI root_path when served under a prefix by a proxy that strips it (only
+#: FastAPI's own /docs page uses it; the frontend's URLs are all relative).
+ROOT_PATH = os.environ.get("QFF3D_ROOT_PATH", "").rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -97,9 +117,11 @@ DEFAULT_WORKDIR = Path(os.environ.get("FREETO_WEBAPP_DIR", "~/.freeto_web")).exp
 # ---------------------------------------------------------------------------
 
 class FileRecord:
-    __slots__ = ("id", "name", "path", "triangles", "bbox_min", "bbox_max", "source", "watertight")
+    __slots__ = ("id", "name", "path", "triangles", "bbox_min", "bbox_max", "source", "watertight",
+                 "created_at")
 
     def __init__(self, id_, name, path, triangles, bbox_min, bbox_max, source, watertight=True):
+        self.created_at = time.time()
         self.id = id_
         self.name = name
         self.path = path
@@ -235,6 +257,38 @@ class FileRegistry:
     def get(self, file_id: str) -> Optional[FileRecord]:
         with self._lock:
             return self._records.get(file_id)
+
+    def purge_expired(self, ttl_s: float, keep_ids=(), now: Optional[float] = None) -> List[str]:
+        """Public mode: forget and delete uploads older than `ttl_s` seconds
+        (bundled example files are never touched), except ids in `keep_ids`
+        (files of jobs still queued or running), and delete stray files in the
+        uploads directory older than that (e.g. from before a restart)."""
+        now = time.time() if now is None else now
+        cutoff = now - float(ttl_s)
+        keep = set(keep_ids or ())
+        gone: List[FileRecord] = []
+        with self._lock:
+            for fid, rec in list(self._records.items()):
+                if rec.source == "upload" and rec.created_at <= cutoff and fid not in keep:
+                    gone.append(self._records.pop(fid))
+        live = set()
+        with self._lock:
+            live = {Path(r.path).name for r in self._records.values()
+                    if r.source == "upload" and r.path is not None}
+        for rec in gone:
+            try:
+                if rec.path is not None:
+                    Path(rec.path).unlink()
+            except OSError:
+                pass
+        if self.uploads_dir.is_dir():
+            for f in self.uploads_dir.iterdir():
+                try:
+                    if f.is_file() and f.name not in live and f.stat().st_mtime <= cutoff:
+                        f.unlink()
+                except OSError:
+                    pass
+        return [r.id for r in gone]
 
     def resolve_path(self, file_id: Optional[str]) -> Optional[str]:
         if not file_id:
@@ -451,24 +505,159 @@ _STUDY_ID_RE = re.compile(r"^[A-Za-z0-9_.~-]{1,128}$")
 
 
 # ---------------------------------------------------------------------------
+# ASGI middleware: proxy prefix + upload size cap
+# ---------------------------------------------------------------------------
+
+class _ProxyAndLimitsMiddleware:
+    """Pure ASGI middleware (no BaseHTTPMiddleware: keeps streaming intact).
+
+    * X-Forwarded-Prefix (or QFF3D_ROOT_PATH) -> scope["root_path"], so the
+      few absolute URLs FastAPI generates itself (the /docs page) carry the
+      public prefix.  Routing is unaffected: the proxy strips the prefix.
+    * Public mode: POST /api/upload bodies larger than the upload cap are
+      refused with 413 before they are parsed (Content-Length if present,
+      else by counting the streamed body)."""
+
+    def __init__(self, app, root_path: str = "", max_upload_body: Optional[int] = None):
+        self.app = app
+        self.root_path = root_path
+        self.max_upload_body = max_upload_body
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        prefix = (headers.get("x-forwarded-prefix") or self.root_path or "").strip()
+        if prefix:
+            prefix = "/" + prefix.strip("/")
+            if prefix != "/" and not scope.get("root_path"):
+                scope = dict(scope, root_path=prefix)
+        limit = self.max_upload_body
+        if limit and scope.get("method") == "POST" and scope.get("path", "").endswith("/api/upload"):
+            cl = headers.get("content-length")
+            if cl is not None:
+                try:
+                    too_big = int(cl) > limit
+                except ValueError:
+                    too_big = False
+                if too_big:
+                    return await self._reject(send, limit)
+            else:
+                # no Content-Length (chunked): buffer up to the cap, then replay
+                chunks, total, more = [], 0, True
+                while more:
+                    msg = await receive()
+                    if msg["type"] != "http.request":
+                        break
+                    body = msg.get("body", b"")
+                    total += len(body)
+                    if total > limit:
+                        return await self._reject(send, limit)
+                    chunks.append(body)
+                    more = msg.get("more_body", False)
+                buffered = b"".join(chunks)
+                sent = False
+
+                async def replay():
+                    nonlocal sent
+                    if not sent:
+                        sent = True
+                        return {"type": "http.request", "body": buffered, "more_body": False}
+                    return await receive()
+
+                return await self.app(scope, replay, send)
+        return await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _reject(send, limit: int):
+        body = json.dumps({"detail": (
+            f"Upload too large: the shared demo server accepts at most "
+            f"{limit / 1024 / 1024:.0f} MB per request. Large custom STLs work in the "
+            f"local version.")}).encode()
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode()),
+                                (b"connection", b"close")]})
+        await send({"type": "http.response.body", "body": body})
+
+
+def _request_client(request: Request) -> str:
+    return client_ip(request.headers, request.client.host if request.client else None)
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
-def create_app(workdir: Optional[Path] = None) -> FastAPI:
+def create_app(workdir: Optional[Path] = None, public: Optional[PublicConfig] = None) -> FastAPI:
     # NB: no filesystem access here — directories under `workdir` (including
     # the default ~/.freeto_web) are created lazily on first actual upload
     # or job, so constructing an (unused) app/import never creates them.
     workdir = Path(workdir or DEFAULT_WORKDIR).expanduser()
     uploads_dir = workdir / "uploads"
     jobs_dir = workdir / "jobs"
+    public = public if public is not None else PublicConfig.from_env()
 
     registry = FileRegistry(uploads_dir)
-    manager = JobManager(jobs_dir)
+    manager = JobManager(jobs_dir, n_workers=public.n_workers, max_wall_s=public.max_job_seconds)
 
-    app = FastAPI(title="QFF-3D: Quantum Free-Form 3D Topology Optimisation", version="0.1.0")
+    janitor_stop = threading.Event()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        # The clean-up thread starts only when this app is actually served
+        # (not when the module-level `app` is merely imported), so a server
+        # process never runs two of them on the same workdir.
+        if public.enabled:
+            def _janitor():
+                while not janitor_stop.wait(public.cleanup_minutes * 60.0):
+                    try:
+                        _cleanup()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("public-mode clean-up failed")
+
+            janitor_stop.clear()
+            threading.Thread(target=_janitor, daemon=True, name="qff3d-janitor").start()
+            logger.info("Public mode: %s", public.to_dict())
+        try:
+            yield
+        finally:
+            janitor_stop.set()
+
+    app = FastAPI(title="QFF-3D: Quantum Free-Form 3D Topology Optimisation", version="1.0.0",
+                  lifespan=lifespan)
     app.state.registry = registry
     app.state.manager = manager
     app.state.workdir = workdir
+    app.state.public = public
+    # serialises "check the limits, then enqueue" so two simultaneous requests
+    # cannot both pass a per-client / queue-size check
+    submit_lock = threading.Lock()
+    app.add_middleware(
+        _ProxyAndLimitsMiddleware, root_path=ROOT_PATH,
+        max_upload_body=(public.max_upload_files * public.max_upload_bytes + 1024 * 1024
+                         if public.enabled else None),
+    )
+
+    def _cleanup() -> dict:
+        """Public mode: delete jobs and uploads older than the TTL."""
+        keep = set()
+        for st in manager.list_jobs():
+            if st.get("status") in ("queued", "running"):
+                job = manager.get(st["id"])
+                cd = (job.config_dict if job is not None else None) or {}
+                keep.update(v for k, v in cd.items() if k.endswith("_id") and isinstance(v, str))
+                keep.update(lc.get("file_id") for lc in cd.get("loads") or [] if isinstance(lc, dict))
+        jobs = manager.purge_expired(public.ttl_seconds)
+        files = registry.purge_expired(public.ttl_seconds, keep_ids=keep)
+        if jobs or files:
+            logger.info("public-mode clean-up: deleted %d job(s), %d upload(s)", len(jobs), len(files))
+        return {"jobs": jobs, "files": files}
+
+    app.state.cleanup = _cleanup
+
+    def _limit_http(exc: LimitError) -> HTTPException:
+        return HTTPException(exc.status, exc.message)
 
     # -- health / meta ---------------------------------------------------
 
@@ -481,18 +670,29 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             "truss": truss_status(),
             "study": study_status(),
             "audit": audit_status(),
-            "workdir": str(workdir),
+            # the server's own data directory is nobody's business on a shared host
+            "workdir": None if public.enabled else str(workdir),
+            "public": {**public.to_dict(), "notice": public.notice()} if public.enabled else
+                      {"enabled": False, "study_enabled": True},
         }
 
     # -- uploads -----------------------------------------------------------
 
     @app.post("/api/upload")
     async def upload(files: List[UploadFile] = File(...)):
+        if public.enabled and len(files) > public.max_upload_files:
+            raise HTTPException(
+                413, f"At most {public.max_upload_files} files per upload on the shared demo server.")
         out = []
         for f in files:
             data = await f.read()
             if not data:
                 raise HTTPException(400, f"File '{f.filename}' is empty.")
+            if public.enabled and len(data) > public.max_upload_bytes:
+                raise HTTPException(
+                    413, f"'{f.filename}' is {len(data) / 1024 / 1024:.2f} MB; the shared demo server "
+                         f"accepts STL files up to {public.max_upload_mb:g} MB. Large custom STLs work "
+                         f"in the local version.")
             try:
                 rec = registry.register_from_bytes(f.filename or "file.stl", data)
             except Exception as exc:  # noqa: BLE001
@@ -622,6 +822,18 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             "example": name,
         }
         prefill.update(preset)
+        notes = []
+        if public.enabled:
+            # a finer example mesh than the shared server allows: pre-fill the
+            # cap and say so (the paper examples, 24-46, are never affected)
+            if int(prefill.get("mesh_control") or 0) > public.max_mesh_control:
+                notes.append(f"Mesh reduced from {prefill['mesh_control']} to "
+                             f"{public.max_mesh_control} (the shared demo server's limit); "
+                             f"run the local version for the original mesh.")
+                prefill["mesh_control"] = public.max_mesh_control
+            if int(prefill.get("max_iter") or 0) > public.max_iter:
+                notes.append(f"Iterations reduced from {prefill['max_iter']} to {public.max_iter}.")
+                prefill["max_iter"] = public.max_iter
         files_display = {
             "domain": domain_rec,
             **{f"force{i+1}": force_recs[i] for i in range(n)},
@@ -631,7 +843,10 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             "zfixed": zfixed_rec,
             "keepdom": keepdom_rec,
         }
-        return {"prefill": prefill, "files": files_display, "paper": paper}
+        out = {"prefill": prefill, "files": files_display, "paper": paper}
+        if notes:
+            out["limits_note"] = " ".join(notes)
+        return out
 
     # -- jobs -------------------------------------------------------------
 
@@ -705,9 +920,13 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
         return cfg
 
     @app.post("/api/jobs")
-    def create_job(req: JobCreateRequest):
+    def create_job(req: JobCreateRequest, request: Request):
         if not CORE_USABLE:
             raise HTTPException(503, unavailable_message())
+        try:
+            check_job_request(public, req)
+        except LimitError as exc:
+            raise _limit_http(exc)
         cfg = _build_config(req)
         try:
             cfg.validate()
@@ -722,16 +941,26 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
         except Exception:  # noqa: BLE001 -- the comparison never blocks a run
             logger.exception("paper comparison failed")
             paper = None
-        job = manager.submit(label, req.model_dump(), cfg, audit=req.audit, paper=paper)
+        client = _request_client(request) if public.enabled else None
+        with submit_lock:
+            try:
+                check_capacity(public, manager, client)
+            except LimitError as exc:
+                raise _limit_http(exc)
+            # `client` only in public mode (keeps the local call signature unchanged)
+            job = manager.submit(label, req.model_dump(), cfg, audit=req.audit, paper=paper,
+                                 **({"client": client} if client is not None else {}))
         return {
             "job_id": job.id,
             "status": job.status,
             "queue_position": manager.queue_position(job.id),
+            "jobs_ahead": manager.jobs_ahead(job.id),
         }
 
     @app.get("/api/jobs")
-    def list_jobs():
-        return manager.list_jobs()
+    def list_jobs(request: Request):
+        # public mode: a visitor only sees their own jobs
+        return manager.list_jobs(client=_request_client(request) if public.enabled else None)
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str, since: int = 0):
@@ -740,6 +969,7 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             raise HTTPException(404, "Unknown job id")
         status = job.snapshot_status(log_since=since)
         status["queue_position"] = manager.queue_position(job_id)
+        status["jobs_ahead"] = manager.jobs_ahead(job_id)
         return status
 
     @app.post("/api/jobs/{job_id}/stop")
@@ -911,9 +1141,13 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
         return None
 
     @app.post("/api/truss/run")
-    def truss_run(req: TrussRunRequest):
+    def truss_run(req: TrussRunRequest, request: Request):
         if not TRUSS_USABLE:
             raise HTTPException(503, truss_unavailable_message())
+        try:
+            check_truss_request(public, req)
+        except (LimitError, TypeError, ValueError) as exc:
+            raise HTTPException(getattr(exc, "status", 400), getattr(exc, "message", str(exc)))
         if TRUSS_METHODS and req.method not in TRUSS_METHODS:
             raise HTTPException(400, f"Unknown method '{req.method}'; choose from {TRUSS_METHODS}")
         bench = _find_truss_benchmark(req.benchmark_id)
@@ -936,14 +1170,22 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
                 raise HTTPException(400, f"QUBO backend '{req.backend}' is unavailable: "
                                          f"{b.get('reason') or 'not installed'}")
         label = req.label or f"{bench.get('title', req.benchmark_id)} — {req.method}"
-        job = manager.submit_truss(
-            label, req.model_dump(), benchmark_id=bench["id"], method=req.method,
-            backend=req.backend, seed=req.seed, options=req.options,
-        )
+        client = _request_client(request) if public.enabled else None
+        with submit_lock:
+            try:
+                check_capacity(public, manager, client)
+            except LimitError as exc:
+                raise _limit_http(exc)
+            job = manager.submit_truss(
+                label, req.model_dump(), benchmark_id=bench["id"], method=req.method,
+                backend=req.backend, seed=req.seed, options=req.options,
+                **({"client": client} if client is not None else {}),
+            )
         return {
             "job_id": job.id,
             "status": job.status,
             "queue_position": manager.queue_position(job.id),
+            "jobs_ahead": manager.jobs_ahead(job.id),
         }
 
     @app.get("/api/jobs/{job_id}/truss_result")
@@ -962,6 +1204,9 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
 
     @app.post("/api/study/run")
     def study_run(req: StudyRunRequest):
+        if public.enabled:
+            # long multi-run studies would block the shared server for hours
+            raise HTTPException(403, LOCAL_VERSION_MSG)
         if not STUDY_USABLE:
             raise HTTPException(503, study_unavailable_message())
         if not req.suite and not req.spec and not req.custom:
@@ -1011,12 +1256,15 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
             raise HTTPException(404, "Unknown study job id")
         status = job.snapshot_status(log_since=since)
         status["queue_position"] = manager.queue_position(job_id)
+        status["jobs_ahead"] = manager.jobs_ahead(job_id)
         return status
 
     # Past studies: every `<workdir>/study/<id>/` (and, read-only, `<repo>/results/<name>/`
     # written by `python -m freeto.study --out results/<name>`, listed as `cli~<name>`) is
     # listed from disk, so finished study outputs survive a server restart.
     study_roots = {"": workdir / "study", "cli~": PACKAGE_ROOT / "results"}
+    if public.enabled:
+        study_roots = {"": workdir / "study"}  # never list the repository's results/ on a shared host
 
     def _study_dir(ident: str) -> Optional[Path]:
         """Study output dir for a study id (in-memory job id, directory name, or cli~name)."""
@@ -1045,7 +1293,9 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
         for p in sorted(base.rglob("*")):
             if p.is_file():
                 rel = p.relative_to(base).as_posix()
-                files.append({"path": rel, "name": p.name, "url": f"/api/study/file/{job_key}/{rel}"})
+                # relative to the app's base URL (no leading slash), so the link
+                # also works when the app is served under a proxy prefix
+                files.append({"path": rel, "name": p.name, "url": f"api/study/file/{job_key}/{rel}"})
         return files[:500]  # sane cap for a "full" suite's per-run artefacts
 
     def _study_summary_row(sid: str, d: Path, source: str) -> Optional[dict]:
@@ -1140,8 +1390,11 @@ def create_app(workdir: Optional[Path] = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/")
+    @app.get("/index.html")
     def index():
-        return FileResponse(str(STATIC_DIR / "index.html"))
+        # no-cache: the page is tiny, and a redeploy must not leave browsers
+        # (or the nitipong.com proxy) on an index.html that references old assets
+        return FileResponse(str(STATIC_DIR / "index.html"), headers={"Cache-Control": "no-cache"})
 
     return app
 
@@ -1177,6 +1430,9 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--workdir", default=None, help="Working directory for uploads/results (default ~/.freeto_web)")
     parser.add_argument("--open", action="store_true", help="Open the app in a browser once the server is up")
+    parser.add_argument("--strict-port", action="store_true",
+                        help="Fail instead of trying the next free port (containers: the platform "
+                             "routes traffic to exactly this port)")
     args = parser.parse_args()
 
     import uvicorn
@@ -1188,7 +1444,8 @@ def main():
     # ports) instead of letting uvicorn.run() crash with a raw bind error, and
     # print the URL prominently so it's the first thing visible in a launcher
     # window full of INFO logging.
-    args.port = _pick_port(args.host, args.port)
+    if not args.strict_port:
+        args.port = _pick_port(args.host, args.port)
     url = f"http://{args.host}:{args.port}/"
     print("=" * max(60, len(url) + 22), flush=True)
     print(f"  QFF-3D web app:  {url}", flush=True)

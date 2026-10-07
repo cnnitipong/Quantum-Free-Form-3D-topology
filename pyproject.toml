@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qff3d"
+version = "1.0.0"
+description = "QFF-3D: Quantum Free-Form 3D Topology Optimisation (FreeTO-Python with QUBO design updates and a web app)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Nitipong Praphaphankul" }]
+keywords = ["topology optimisation", "QUBO", "quantum annealing", "QAOA", "FreeTO", "STL"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+]
+# Core numerical dependencies (requirements.txt is the pinned-by-range source
+# used by the launchers, CI and the Dockerfile; keep both in sync).
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "scikit-image>=0.21",
+    "pyamg>=5.0; python_version < '3.14'",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+# web app (webapp/)
+web = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
+# Intel MKL PARDISO direct solver (x86-64 Windows/Linux only; see requirements.txt)
+pardiso = ["pypardiso>=0.4.6,<0.5; (sys_platform == 'win32' or sys_platform == 'linux') and platform_machine in 'x86_64 AMD64'"]
+# optional QUBO backends (requirements-quantum.txt)
+quantum = ["dwave-ocean-sdk>=7", "qiskit>=1.2", "qiskit-aer>=0.15", "qiskit-ibm-runtime>=0.30"]
+test = ["pytest>=7", "httpx>=0.24"]
+
+[project.urls]
+Homepage = "https://github.com/cnnitipong/Quantum-Free-Form-3D-topology"
+Demo = "https://nitipong.com/qff3d"
+Issues = "https://github.com/cnnitipong/Quantum-Free-Form-3D-topology/issues"
+
+[project.scripts]
+freeto = "freeto.cli:main"
+qff3d-web = "webapp.server:main"
+
+# The web app reads the example STLs from examples/STLs next to the packages,
+# so install from a clone in editable mode: pip install -e ".[web]"
+[tool.setuptools]
+packages = ["freeto", "freeto.quantum", "freeto.truss", "webapp"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+freeto = ["*.json"]
+webapp = ["static/*.html", "static/css/*", "static/js/*", "static/vendor/*/*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: long-running tests (deselect with -m 'not slow')",
+]

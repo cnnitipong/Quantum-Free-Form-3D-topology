@@ -1,0 +1,21 @@
+# Keep the build context (and the image) small: only what the app needs.
+.git
+.github
+.gitignore
+.gitattributes
+.editorconfig
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.venv
+venv
+results
+*.npz
+.DS_Store
+tests
+webapp/screenshots
+deploy
+Dockerfile
+.dockerignore
+Start QFF-3D (Windows).bat
+Start QFF-3D (macOS).command

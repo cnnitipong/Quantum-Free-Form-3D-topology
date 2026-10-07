@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: >-
+  If you use QFF-3D, please cite the software as below and the accompanying
+  manuscript (preferred citation). NOTE: the manuscript is SUBMITTED to
+  Engineering Structures and not yet published; update this entry when it is.
+title: "QFF-3D: Quantum Free-Form 3D Topology Optimisation"
+type: software
+version: 1.0.0
+date-released: "2026-10-07"
+license: MIT
+repository-code: "https://github.com/cnnitipong/Quantum-Free-Form-3D-topology"
+url: "https://nitipong.com/qff3d"
+authors:
+  - family-names: Praphaphankul
+    given-names: Nitipong
+    affiliation: Chulalongkorn University
+keywords:
+  - topology optimisation
+  - QUBO
+  - quantum annealing
+  - QAOA
+  - freeform
+  - FreeTO
+references:
+  - type: article
+    title: "FreeTO - Freeform 3D topology optimization using a structured mesh with smooth boundaries in Matlab"
+    authors:
+      - family-names: Ibhadode
+        given-names: O.
+      - family-names: Fu
+        given-names: Y.-F.
+      - family-names: Qureshi
+        given-names: A.
+    journal: Advances in Engineering Software
+    volume: 198
+    start: 103790
+    year: 2024
+    doi: 10.1016/j.advengsoft.2024.103790
+preferred-citation:
+  type: article
+  title: >-
+    QUBO design updates for freeform 3D topology optimisation: a
+    quantum-annealing-compatible formulation benchmarked against MMA
+  authors:
+    - family-names: Praphaphankul
+      given-names: Nitipong
+      affiliation: Chulalongkorn University
+  journal: Engineering Structures
+  status: submitted
+  year: 2026
+  notes: "Submitted manuscript, not yet peer reviewed or published."

@@ -3,6 +3,20 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
 // ---------------------------------------------------------------------
+// Base URL. Every request goes through apiUrl(), relative to the directory
+// the page was loaded from, so the app works both at http://localhost:PORT/
+// and behind a reverse proxy under a prefix (https://nitipong.com/qff3d/ ->
+// the Hugging Face Space; the proxy strips the prefix). Never use a leading
+// "/" for an app URL.
+// ---------------------------------------------------------------------
+const BASE_PATH = window.location.pathname.replace(/[^/]*$/, "");
+function apiUrl(path) {
+  const p = String(path);
+  if (/^[a-z][a-z0-9+.-]*:/i.test(p)) return p; // already absolute (http:, blob:, data:)
+  return BASE_PATH + p.replace(/^\/+/, "");
+}
+
+// ---------------------------------------------------------------------
 // DOM refs
 // ---------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -57,6 +71,8 @@ const el = {
 // Global state
 // ---------------------------------------------------------------------
 const state = {
+  // public (hosted) mode limits from GET /api/health (webapp/public.py); null locally
+  public: null,
   files: new Map(), // id -> {id,name,triangles,bbox,role,visible,mesh}
   loads: [],        // [{file_id, fx, fy, fz}]
   symmetry: [],     // [{plane, direction}]
@@ -254,7 +270,7 @@ function materialForRole(role, selected) {
 async function ensureInputMesh(rec) {
   if (rec.mesh) return rec.mesh;
   try {
-    const geom = await fetchGeometry(`/api/files/${rec.id}`);
+    const geom = await fetchGeometry(apiUrl(`api/files/${rec.id}`));
     const mesh = new THREE.Mesh(geom, materialForRole(rec.role, false));
     mesh.userData.fileId = rec.id;
     rec.mesh = mesh;
@@ -604,19 +620,41 @@ el.addSymmetryBtn.addEventListener("click", () => addSymmetryRow());
 // ---------------------------------------------------------------------
 // Uploading
 // ---------------------------------------------------------------------
+// One request per file: keeps every request small, which matters behind the
+// nitipong.com proxy (about 4.5 MB per request; see deploy/vercel/README.md).
 async function uploadFiles(fileList) {
   const files = Array.from(fileList);
   if (!files.length) return;
-  const form = new FormData();
-  for (const f of files) form.append("files", f);
-  const resp = await fetch("/api/upload", { method: "POST", body: form });
-  if (!resp.ok) {
-    const detail = await safeErrorDetail(resp);
-    setRunMessage(`Upload failed: ${detail}`, true);
+  const pub = state.public;
+  if (pub && pub.enabled && files.length > pub.max_upload_files) {
+    setRunMessage(`Upload failed: at most ${pub.max_upload_files} files on the shared demo server.`, true);
     return;
   }
-  const records = await resp.json();
-  records.forEach((rec) => addFileRecord(rec));
+  for (const f of files) {
+    const form = new FormData();
+    form.append("files", f);
+    let resp;
+    try {
+      resp = await fetch(apiUrl("api/upload"), { method: "POST", body: form });
+    } catch (err) {
+      setRunMessage(`Upload of '${f.name}' failed: ${err}. ${largeUploadHint()}`, true);
+      return;
+    }
+    if (!resp.ok) {
+      let detail = await safeErrorDetail(resp);
+      if (resp.status === 413) detail = `'${f.name}' is too large for this server. ${largeUploadHint()}`;
+      setRunMessage(`Upload failed: ${detail}`, true);
+      return;
+    }
+    const records = await resp.json();
+    records.forEach((rec) => addFileRecord(rec));
+  }
+}
+
+function largeUploadHint() {
+  const direct = state.public && state.public.direct_url;
+  return "Large custom STLs work in the local version" +
+    (direct ? ` or directly at ${direct}` : "") + ".";
 }
 
 el.fileInput.addEventListener("change", (e) => uploadFiles(e.target.files));
@@ -658,7 +696,7 @@ const PAPER_METHOD_TITLES = {
 };
 
 async function fetchExamples() {
-  const resp = await fetch("/api/examples");
+  const resp = await fetch(apiUrl("api/examples"));
   const list = await resp.json();
   el.exampleSelect.innerHTML = '<option value="">Choose an example…</option>';
 
@@ -703,7 +741,7 @@ el.exampleSelect.addEventListener("change", () => {
 // --- paper settings ----------------------------------------------------
 async function fetchPaperInfo(name) {
   try {
-    const resp = await fetch(`/api/examples/${name}/paper`);
+    const resp = await fetch(apiUrl(`api/examples/${name}/paper`));
     if (!resp.ok) return null;
     return await resp.json();
   } catch {
@@ -764,6 +802,40 @@ function setSelectValue(id, value) {
 // POST /api/jobs field names (webapp/paper_presets.py).
 function applyPreset(p) {
   if (!p) return;
+  applyPresetFields(p);
+  clampToPublicLimits();
+}
+
+// Public mode: the shared server caps the mesh and the iteration count
+// (webapp/public.py). A preset above a cap is shown at the cap, with a note,
+// rather than failing when the user presses Run.
+function clampToPublicLimits() {
+  const pub = state.public;
+  const note = $("public-limit-note");
+  if (!pub || !pub.enabled) { if (note) note.hidden = true; return; }
+  const msgs = [];
+  const clamp = (id, cap, what) => {
+    const inp = $(id);
+    if (!inp) return;
+    inp.max = String(cap);
+    const v = parseInt(inp.value, 10);
+    if (Number.isFinite(v) && v > cap) {
+      msgs.push(`${what} reduced from ${v} to ${cap}`);
+      inp.value = String(cap);
+    }
+  };
+  clamp("p-mesh_control", pub.max_mesh_control, "MeshControl");
+  clamp("p-max_iter", pub.max_iter, "Iteration cap");
+  if (note) {
+    note.hidden = !msgs.length;
+    note.textContent = msgs.length
+      ? `Shared demo server: ${msgs.join("; ")} (limits: MeshControl ≤ ${pub.max_mesh_control}, ` +
+        `${pub.max_iter} iterations). Run the local version for the original settings.`
+      : "";
+  }
+}
+
+function applyPresetFields(p) {
   const num = (id, v) => { if (v !== undefined) $(id).value = v == null ? "" : v; };
   const chk = (id, v) => { if (v !== undefined && v !== null) $(id).checked = !!v; };
   num("p-mesh_control", p.mesh_control);
@@ -854,7 +926,7 @@ async function initPaperDefaults() {
 }
 
 async function loadExample(name) {
-  const resp = await fetch(`/api/examples/${name}/load`, { method: "POST" });
+  const resp = await fetch(apiUrl(`api/examples/${name}/load`), { method: "POST" });
   if (!resp.ok) {
     setRunMessage(`Could not load example: ${await safeErrorDetail(resp)}`, true);
     return;
@@ -1071,10 +1143,10 @@ function populateBackendSelect(selectEl, backends, { includeAuto = true } = {}) 
 async function fetchQuantumBackends() {
   let data;
   try {
-    const resp = await fetch("/api/quantum/backends");
+    const resp = await fetch(apiUrl("api/quantum/backends"));
     data = await resp.json();
   } catch {
-    data = { quantum_available: false, import_error: "request to /api/quantum/backends failed", backends: [], continuum_qubo_supported: false };
+    data = { quantum_available: false, import_error: "request to api/quantum/backends failed", backends: [], continuum_qubo_supported: false };
   }
   state.quantumBackends = data.backends || [];
   state.quantumAvailable = !!data.quantum_available;
@@ -1145,7 +1217,7 @@ async function runJob() {
   }
 
   setRunMessage("Submitting job…", false);
-  const resp = await fetch("/api/jobs", {
+  const resp = await fetch(apiUrl("api/jobs"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1164,18 +1236,23 @@ async function runJob() {
   clearDesignMesh();
   state.finishedJobId = null;
   el.resultCard.hidden = true;
-  setRunMessage(
-    data.queue_position && data.queue_position > 1
-      ? `Queued (position ${data.queue_position}).`
-      : "Running…",
-    false
-  );
+  setRunMessage(data.jobs_ahead ? queuedText(data) : "Running…", false);
   startPolling(data.job_id);
+}
+
+// "Queued: 2 jobs ahead of yours (queue position 1)." for a waiting job.
+function queuedText(s) {
+  const ahead = s.jobs_ahead;
+  const pos = s.queue_position;
+  if (ahead == null) return pos ? `Queued (position ${pos}).` : "Queued…";
+  if (ahead === 0) return "Queued: starting shortly…";
+  return `Queued: ${ahead} job${ahead === 1 ? "" : "s"} ahead of yours` +
+    (pos ? ` (queue position ${pos})` : "") + ". It starts automatically.";
 }
 
 async function stopJob() {
   if (!state.currentJobId) return;
-  await fetch(`/api/jobs/${state.currentJobId}/stop`, { method: "POST" });
+  await fetch(apiUrl(`api/jobs/${state.currentJobId}/stop`), { method: "POST" });
   setRunMessage("Stop requested…", false);
 }
 
@@ -1205,7 +1282,7 @@ function startPolling(jobId) {
 async function pollOnce(jobId) {
   let resp;
   try {
-    resp = await fetch(`/api/jobs/${jobId}?since=${logCursor}`);
+    resp = await fetch(apiUrl(`api/jobs/${jobId}?since=${logCursor}`));
   } catch {
     return;
   }
@@ -1234,12 +1311,13 @@ async function pollOnce(jobId) {
   updateChart(s.history);
 
   if (s.status === "running" || s.status === "queued") {
-    if (s.queue_position && s.queue_position > 1) {
-      setRunMessage(`Queued (position ${s.queue_position}).`, false);
+    if (s.status === "queued") {
+      setRunMessage(queuedText(s), false);
     } else if (s.last_iter) {
       setRunMessage(`Running… iteration ${s.last_iter}${s.max_iter ? " / " + s.max_iter : ""}`, false);
     }
-    maybeRefreshPreview(jobId, s.last_iter);
+    // no preview exists before the first iteration (the endpoint would 404)
+    if (s.last_iter) maybeRefreshPreview(jobId, s.last_iter);
     return;
   }
 
@@ -1263,7 +1341,7 @@ async function pollOnce(jobId) {
     await loadAudit(jobId, s);
     refreshAuditJobList();
   } else if (s.status === "stopped") {
-    setRunMessage("Stopped.", false);
+    setRunMessage(s.error ? `Stopped. ${s.error}` : "Stopped.", false);
     if (s.has_result) {
       el.downloadStlBtn.disabled = false;
       el.downloadNpzBtn.disabled = false;
@@ -1316,7 +1394,7 @@ async function maybeRefreshPreview(jobId, iter) {
   if (iter === lastPreviewIter) return;
   lastPreviewIter = iter;
   try {
-    const resp = await fetch(`/api/jobs/${jobId}/preview.stl?iter=${iter}`, { cache: "no-store" });
+    const resp = await fetch(apiUrl(`api/jobs/${jobId}/preview.stl?iter=${iter}`), { cache: "no-store" });
     if (!resp.ok) return;
     const buf = await resp.arrayBuffer();
     setDesignGeometry(buf, false);
@@ -1367,9 +1445,9 @@ async function loadFinalDesign(jobId) {
   try {
     let resp = null;
     if (el.designView.value === "evaluated") {
-      resp = await fetch(`/api/jobs/${jobId}/evaluated.stl`, { cache: "no-store" });
+      resp = await fetch(apiUrl(`api/jobs/${jobId}/evaluated.stl`), { cache: "no-store" });
     }
-    if (!resp || !resp.ok) resp = await fetch(`/api/jobs/${jobId}/result.stl`, { cache: "no-store" });
+    if (!resp || !resp.ok) resp = await fetch(apiUrl(`api/jobs/${jobId}/result.stl`), { cache: "no-store" });
     if (!resp.ok) return;
     const buf = await resp.arrayBuffer();
     setDesignGeometry(buf, true);
@@ -1425,10 +1503,10 @@ el.designView.addEventListener("change", () => {
 el.fitViewBtn.addEventListener("click", fitView);
 
 el.downloadStlBtn.addEventListener("click", () => {
-  if (state.currentJobId) window.location.href = `/api/jobs/${state.currentJobId}/result.stl`;
+  if (state.currentJobId) window.location.href = apiUrl(`api/jobs/${state.currentJobId}/result.stl`);
 });
 el.downloadNpzBtn.addEventListener("click", () => {
-  if (state.currentJobId) window.location.href = `/api/jobs/${state.currentJobId}/result.npz`;
+  if (state.currentJobId) window.location.href = apiUrl(`api/jobs/${state.currentJobId}/result.npz`);
 });
 
 // ---------------------------------------------------------------------
@@ -1557,7 +1635,7 @@ function renderAuditCard(jobId, label, a) {
   const img = $("audit-img");
   const link = $("audit-img-link");
   const msg = $("audit-img-msg");
-  const url = `/api/jobs/${jobId}/audit.png`;
+  const url = apiUrl(`api/jobs/${jobId}/audit.png`);
   msg.textContent = "Rendering overlay figure…";
   link.hidden = true;
   img.onload = () => { msg.textContent = "Click the figure to enlarge."; link.hidden = false; };
@@ -1575,7 +1653,7 @@ function renderAuditCard(jobId, label, a) {
 
 async function loadAudit(jobId, status) {
   try {
-    const resp = await fetch(`/api/jobs/${jobId}/audit`, { cache: "no-store" });
+    const resp = await fetch(apiUrl(`api/jobs/${jobId}/audit`), { cache: "no-store" });
     if (!resp.ok) {
       $("audit-card").hidden = true;
       if (resp.status === 409) {
@@ -1602,7 +1680,7 @@ async function runAuditFor(jobId, label, msgBox, btns) {
   msgBox.textContent = "Auditing…";
   msgBox.classList.remove("error");
   try {
-    const resp = await fetch(`/api/jobs/${jobId}/audit/run`, { method: "POST" });
+    const resp = await fetch(apiUrl(`api/jobs/${jobId}/audit/run`), { method: "POST" });
     if (!resp.ok) {
       msgBox.textContent = await safeErrorDetail(resp);
       msgBox.classList.add("error");
@@ -1627,7 +1705,7 @@ async function refreshAuditJobList() {
   if (!sel) return;
   let jobs;
   try {
-    const resp = await fetch("/api/jobs", { cache: "no-store" });
+    const resp = await fetch(apiUrl("api/jobs"), { cache: "no-store" });
     if (!resp.ok) return;
     jobs = await resp.json();
   } catch { return; }
@@ -1830,10 +1908,40 @@ function initTheme() {
 // ---------------------------------------------------------------------
 // Health / core badge
 // ---------------------------------------------------------------------
+function applyPublicMode(pub) {
+  state.public = pub && pub.enabled ? pub : null;
+  const notice = $("public-notice");
+  const upNote = $("upload-limit-note");
+  if (!state.public) {
+    if (notice) notice.hidden = true;
+    if (upNote) upNote.hidden = true;
+    return;
+  }
+  if (notice) {
+    const hours = Number(pub.ttl_hours);
+    const when = hours >= 1 ? `${hours} hour${hours === 1 ? "" : "s"}` : `${Math.round(hours * 60)} minutes`;
+    notice.innerHTML =
+      `Shared demo server: one job at a time, runs are deleted after ${escHtml(when)}. ` +
+      `For the full version run it locally (<a href="${escHtml(pub.repo_url)}" target="_blank" rel="noopener">GitHub</a>).`;
+    notice.hidden = false;
+  }
+  if (upNote) {
+    // behind the nitipong.com proxy (not on the direct *.hf.space address)
+    // every request body is capped at about 4.5 MB by Vercel
+    const viaProxy = !/\.hf\.space$/i.test(window.location.hostname);
+    upNote.textContent =
+      `Shared demo server: STL files up to ${pub.max_upload_mb} MB, at most ${pub.max_upload_files} files. ` +
+      (viaProxy ? "Through nitipong.com/qff3d each file is limited to about 4.5 MB. " : "") + largeUploadHint();
+    upNote.hidden = false;
+  }
+  clampToPublicLimits();
+}
+
 async function loadHealth() {
   try {
-    const resp = await fetch("/api/health");
+    const resp = await fetch(apiUrl("api/health"));
     const data = await resp.json();
+    applyPublicMode(data.public);
     const core = data.core || {};
     const src = core.source || "unknown";
     el.coreBadge.textContent = `core: ${src}`;
@@ -1857,7 +1965,17 @@ async function loadHealth() {
     // instead of a dead "Run study" button when it's missing.
     const study = data.study || {};
     const studyCard = $("study-unavailable-card");
-    if (studyCard) {
+    if (studyCard && data.public && data.public.enabled) {
+      // long multi-run studies are not offered on the shared demo server
+      studyCard.hidden = false;
+      $("study-unavailable-legend").textContent = "Studies: local version only";
+      $("study-unavailable-msg").innerHTML =
+        "Multi-run studies are available in the local version " +
+        `(<a href="${escHtml(data.public.repo_url)}" target="_blank" rel="noopener">GitHub</a>). ` +
+        "Past results can still be browsed here when present.";
+      const runBtn = $("study-run-btn");
+      if (runBtn) { runBtn.disabled = true; runBtn.title = "Available in the local version"; }
+    } else if (studyCard) {
       studyCard.hidden = !!study.usable;
       if (!study.usable) {
         $("study-unavailable-msg").textContent =
@@ -1946,10 +2064,10 @@ function initTabs() {
 async function fetchTrussBenchmarks() {
   let data;
   try {
-    const resp = await fetch("/api/truss/benchmarks");
+    const resp = await fetch(apiUrl("api/truss/benchmarks"));
     data = await resp.json();
   } catch {
-    data = { truss_available: false, import_error: "request to /api/truss/benchmarks failed", benchmarks: [], methods: [] };
+    data = { truss_available: false, import_error: "request to api/truss/benchmarks failed", benchmarks: [], methods: [] };
   }
   state.truss.benchmarks = data.benchmarks || [];
   state.truss.methods = data.methods || [];
@@ -2011,7 +2129,7 @@ async function onTrussBenchmarkChange() {
   $("truss-benchmark-desc").textContent = bench ? bench.description || "" : "";
   updateTrussMethodAvailability(bench);
   try {
-    const resp = await fetch(`/api/truss/benchmarks/${id}`);
+    const resp = await fetch(apiUrl(`api/truss/benchmarks/${id}`));
     if (!resp.ok) { setTrussMessage(await safeErrorDetail(resp), true); return; }
     const data = await resp.json();
     state.truss.currentProblem = data.problem;
@@ -2265,7 +2383,7 @@ async function runTruss() {
   setTrussMessage("Submitting…", false);
   let resp;
   try {
-    resp = await fetch("/api/truss/run", {
+    resp = await fetch(apiUrl("api/truss/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2278,16 +2396,13 @@ async function runTruss() {
   const data = await resp.json();
   state.truss.jobId = data.job_id;
   setTrussRunning(true);
-  setTrussMessage(
-    data.queue_position && data.queue_position > 1 ? `Queued (position ${data.queue_position}).` : "Running…",
-    false
-  );
+  setTrussMessage(data.jobs_ahead ? queuedText(data) : "Running…", false);
   startTrussPolling(data.job_id);
 }
 
 async function stopTruss() {
   if (!state.truss.jobId) return;
-  await fetch(`/api/jobs/${state.truss.jobId}/stop`, { method: "POST" });
+  await fetch(apiUrl(`api/jobs/${state.truss.jobId}/stop`), { method: "POST" });
   setTrussMessage("Stop requested…", false);
 }
 
@@ -2300,7 +2415,7 @@ function startTrussPolling(jobId) {
 async function pollTrussOnce(jobId) {
   let resp;
   try {
-    resp = await fetch(`/api/jobs/${jobId}`);
+    resp = await fetch(apiUrl(`api/jobs/${jobId}`));
   } catch {
     return;
   }
@@ -2308,9 +2423,7 @@ async function pollTrussOnce(jobId) {
   const s = await resp.json();
   if (s.status === "running" || s.status === "queued") {
     setTrussMessage(
-      s.queue_position && s.queue_position > 1
-        ? `Queued (position ${s.queue_position}).`
-        : `Running… ${s.stage ? "(" + s.stage + ")" : ""}`,
+      s.status === "queued" ? queuedText(s) : `Running… ${s.stage ? "(" + s.stage + ")" : ""}`,
       false
     );
     return;
@@ -2321,7 +2434,7 @@ async function pollTrussOnce(jobId) {
   if (s.status === "done" || s.status === "stopped") {
     setTrussMessage(s.status === "done" ? "Done." : "Stopped.", false);
     try {
-      const rresp = await fetch(`/api/jobs/${jobId}/truss_result`);
+      const rresp = await fetch(apiUrl(`api/jobs/${jobId}/truss_result`));
       if (rresp.ok) {
         const result = await rresp.json();
         // Label from what the job was *submitted* with (server status.spec),
@@ -2404,7 +2517,7 @@ async function renderStudyContinuumBuilder() {
   if (!pl || !ml) return;
   if (!state.study.customOptions) {
     try {
-      const resp = await fetch("/api/study/custom_options");
+      const resp = await fetch(apiUrl("api/study/custom_options"));
       state.study.customOptions = await resp.json();
     } catch (err) {
       pl.textContent = `Could not load options: ${err}`;
@@ -2542,7 +2655,7 @@ async function runStudy() {
   $("study-progress").textContent = "";
   let resp;
   try {
-    resp = await fetch("/api/study/run", {
+    resp = await fetch(apiUrl("api/study/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2563,16 +2676,13 @@ async function runStudy() {
   $("study-summary-details").hidden = true;
   state.study.studyId = data.study_id || null;
   setStudyRunning(true);
-  setStudyMessage(
-    data.queue_position && data.queue_position > 1 ? `Queued (position ${data.queue_position}).` : "Running…",
-    false
-  );
+  setStudyMessage(data.jobs_ahead ? queuedText(data) : "Running…", false);
   startStudyPolling(data.job_id);
 }
 
 async function stopStudy() {
   if (!state.study.jobId) return;
-  await fetch(`/api/jobs/${state.study.jobId}/stop`, { method: "POST" });
+  await fetch(apiUrl(`api/jobs/${state.study.jobId}/stop`), { method: "POST" });
   setStudyMessage("Stop requested…", false);
 }
 
@@ -2585,7 +2695,7 @@ function startStudyPolling(jobId) {
 async function pollStudyOnce(jobId) {
   let resp;
   try {
-    resp = await fetch(`/api/study/status/${jobId}?since=${state.study.logCursor}`);
+    resp = await fetch(apiUrl(`api/study/status/${jobId}?since=${state.study.logCursor}`));
   } catch {
     return;
   }
@@ -2606,10 +2716,7 @@ async function pollStudyOnce(jobId) {
   }
 
   if (s.status === "running" || s.status === "queued") {
-    setStudyMessage(
-      s.queue_position && s.queue_position > 1 ? `Queued (position ${s.queue_position}).` : "Running…",
-      false
-    );
+    setStudyMessage(s.status === "queued" ? queuedText(s) : "Running…", false);
     return;
   }
 
@@ -2629,7 +2736,7 @@ async function pollStudyOnce(jobId) {
 async function loadStudyResults(id, title) {
   let data;
   try {
-    const resp = await fetch(`/api/study/results/${encodeURIComponent(id)}`);
+    const resp = await fetch(apiUrl(`api/study/results/${encodeURIComponent(id)}`));
     if (!resp.ok) { $("study-results-table-wrap").textContent = await safeErrorDetail(resp); return; }
     data = await resp.json();
   } catch (err) {
@@ -2657,7 +2764,7 @@ async function refreshPastStudies() {
   if (!box) return;
   let data;
   try {
-    const resp = await fetch("/api/study/list", { cache: "no-store" });
+    const resp = await fetch(apiUrl("api/study/list"), { cache: "no-store" });
     if (!resp.ok) return;
     data = await resp.json();
   } catch { return; }
@@ -2704,7 +2811,7 @@ function renderStudyFigures(files) {
   for (const f of pngs) {
     const fig = document.createElement("figure");
     const img = document.createElement("img");
-    img.src = f.url;
+    img.src = apiUrl(f.url);
     img.alt = f.name;
     img.loading = "lazy";
     const cap = document.createElement("figcaption");
@@ -2723,7 +2830,7 @@ function renderStudyDownloads(files) {
     const f = files.find((x) => x.name === name);
     if (!f) continue;
     const a = document.createElement("a");
-    a.href = f.url;
+    a.href = apiUrl(f.url);
     a.textContent = name;
     a.className = "btn small";
     a.style.marginLeft = "6px";

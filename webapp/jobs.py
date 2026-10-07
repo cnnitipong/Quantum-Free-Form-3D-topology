@@ -4,6 +4,13 @@ A single background worker thread runs jobs strictly one at a time (FreeTO
 itself is CPU/BLAS heavy and not designed for concurrent runs sharing a
 process); further job submissions while one is running are queued and served
 FIFO. Each job also gets its own `threading.Event` for cooperative stopping.
+
+Public (hosted) mode (webapp/public.py) adds: an optional wall-time cap per
+job (the job's stop event is set when it expires, so the run ends exactly as
+if the user had pressed Stop), per-client bookkeeping, and deletion of
+finished jobs after a time-to-live.  `n_workers` > 1 (QFF3D_MAX_RUNNING) runs
+that many jobs side by side; that is possible but not recommended for the
+reason above, and the default stays 1.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ import json
 import math
 import os
 import queue
+import shutil
 import struct
 import threading
 import time
@@ -75,6 +83,9 @@ class Job:
     # Kind-specific extra payload not shaped like the continuum history/log
     # (a TrussResult.to_dict(), a study results dict, its out_dir, ...).
     extra: Dict[str, Any] = field(default_factory=dict)
+    # Client address of the submitter (public mode: per-client limit; the job
+    # list only shows a visitor's own jobs). None for local use.
+    client: Optional[str] = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     # Absolute (never-reset) count of log lines ever appended. The deque
@@ -168,30 +179,38 @@ class Job:
         return out
 
 
+ACTIVE_STATUSES = ("queued", "running")
+
+
 class JobManager:
-    def __init__(self, jobs_dir):
+    def __init__(self, jobs_dir, n_workers: int = 1, max_wall_s: Optional[float] = None):
         self.jobs_dir = jobs_dir
+        self.max_wall_s = float(max_wall_s) if max_wall_s else None
         self._jobs: Dict[str, Job] = {}
         self._order: List[str] = []
         self._queue: "queue.Queue[str]" = queue.Queue()
-        self._current_job_id: Optional[str] = None
+        self._running_ids: set = set()
         self._global_lock = threading.Lock()
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
-        self._worker.start()
+        self._workers = [threading.Thread(target=self._worker_loop, daemon=True,
+                                          name=f"freeto-job-worker-{i}")
+                         for i in range(max(1, int(n_workers)))]
+        for w in self._workers:
+            w.start()
 
     # -- public API ---------------------------------------------------
 
     def submit(self, label: str, config_dict: dict, cfg: "FreeTOConfig", audit: bool = True,
-               paper: Optional[dict] = None) -> Job:
+               paper: Optional[dict] = None, client: Optional[str] = None) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job = Job(id=job_id, label=label, config_dict=config_dict, cfg=cfg, kind="continuum",
-                  audit_enabled=bool(audit))
+                  audit_enabled=bool(audit), client=client)
         if paper is not None:
             job.extra["paper"] = paper
         return self._enqueue(job)
 
     def submit_truss(self, label: str, config_dict: dict, *, benchmark_id: str, method: str,
-                      backend: Optional[str], seed: Optional[int], options: dict) -> Job:
+                      backend: Optional[str], seed: Optional[int], options: dict,
+                      client: Optional[str] = None) -> Job:
         job_id = uuid.uuid4().hex[:12]
         run_spec = {
             "benchmark_id": benchmark_id,
@@ -200,7 +219,8 @@ class JobManager:
             "seed": seed,
             "options": dict(options or {}),
         }
-        job = Job(id=job_id, label=label, config_dict=config_dict, kind="truss", run_spec=run_spec)
+        job = Job(id=job_id, label=label, config_dict=config_dict, kind="truss", run_spec=run_spec,
+                  client=client)
         return self._enqueue(job)
 
     def submit_study(self, label: str, config_dict: dict, *, spec: dict, out_dir, figures: bool) -> Job:
@@ -220,7 +240,8 @@ class JobManager:
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
 
-    def list_jobs(self) -> List[dict]:
+    def list_jobs(self, client: Optional[str] = None) -> List[dict]:
+        """Status of every job, newest first (only `client`'s jobs if given)."""
         with self._global_lock:
             ids = list(self._order)
         out = []
@@ -228,8 +249,80 @@ class JobManager:
             job = self._jobs.get(jid)
             if job is None:
                 continue
+            if client is not None and job.client != client:
+                continue
             out.append(job.snapshot_status())
         return out
+
+    # -- counts (public-mode limits) -------------------------------------
+
+    def _snapshot_jobs(self) -> List[Job]:
+        with self._global_lock:
+            return [self._jobs[j] for j in self._order if j in self._jobs]
+
+    def active_count(self, client: Optional[str] = None) -> int:
+        """Queued + running jobs (of `client` only, if given)."""
+        return sum(1 for j in self._snapshot_jobs()
+                   if j.status in ACTIVE_STATUSES and (client is None or j.client == client))
+
+    def queued_count(self) -> int:
+        return sum(1 for j in self._snapshot_jobs() if j.status == "queued")
+
+    def running_count(self) -> int:
+        return sum(1 for j in self._snapshot_jobs() if j.status == "running")
+
+    def jobs_ahead(self, job_id: str) -> Optional[int]:
+        """Jobs that will start or finish before a queued job can start
+        (running jobs + queued jobs submitted earlier); None if not queued."""
+        pos = self.queue_position(job_id)
+        if pos is None:
+            return None
+        return self.running_count() + pos - 1
+
+    # -- retention (public mode) ------------------------------------------
+
+    def delete_job(self, job_id: str) -> bool:
+        """Forget a finished job and delete its directory; refuses (False) for
+        a queued / running job."""
+        with self._global_lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status in ACTIVE_STATUSES:
+                return False
+            del self._jobs[job_id]
+            self._order = [j for j in self._order if j != job_id]
+        shutil.rmtree(self.jobs_dir / job_id, ignore_errors=True)
+        return True
+
+    def purge_expired(self, ttl_s: float, now: Optional[float] = None) -> List[str]:
+        """Delete every finished job older than `ttl_s` seconds (counted from
+        when it finished, or was submitted if it never ran), plus job
+        directories on disk that no live job owns and that were last modified
+        more than `ttl_s` ago (e.g. left over from before a restart).
+        Returns the deleted job ids."""
+        now = time.time() if now is None else now
+        cutoff = now - float(ttl_s)
+        deleted = []
+        for job in self._snapshot_jobs():
+            if job.status in ACTIVE_STATUSES:
+                continue
+            t = job.finished_at or job.created_at
+            if t <= cutoff and self.delete_job(job.id):
+                deleted.append(job.id)
+        root = Path(self.jobs_dir)
+        if root.is_dir():
+            for d in root.iterdir():
+                if d.name in self._jobs:
+                    continue
+                try:
+                    if d.stat().st_mtime <= cutoff:
+                        if d.is_dir():
+                            shutil.rmtree(d, ignore_errors=True)
+                        else:
+                            d.unlink()
+                        deleted.append(d.name)
+                except OSError:
+                    pass
+        return deleted
 
     def stop(self, job_id: str) -> bool:
         job = self.get(job_id)
@@ -312,7 +405,22 @@ class JobManager:
         job.status = "running"
         job.stage = "starting"
         job.started_at = time.time()
-        self._current_job_id = job.id
+        with self._global_lock:
+            self._running_ids.add(job.id)
+        timer = None
+        if self.max_wall_s:
+            limit = self.max_wall_s
+
+            def _expire():
+                if job.status == "running" and not job.stop_event.is_set():
+                    job.extra["wall_time_exceeded"] = True
+                    job.append_log(f"Wall-time limit of the shared server reached "
+                                   f"({limit / 60:g} min): stopping the job.")
+                    job.stop_event.set()
+
+            timer = threading.Timer(limit, _expire)
+            timer.daemon = True
+            timer.start()
         try:
             if job.kind == "continuum":
                 self._run_continuum(job)
@@ -328,8 +436,14 @@ class JobManager:
             job.error = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             job.append_log(f"ERROR: {exc}")
         finally:
+            if timer is not None:
+                timer.cancel()
+            if job.extra.get("wall_time_exceeded") and job.status == "stopped":
+                job.error = (f"Stopped after the shared server's wall-time limit of "
+                             f"{self.max_wall_s / 60:g} min; the design reached so far is kept.")
             job.finished_at = time.time()
-            self._current_job_id = None
+            with self._global_lock:
+                self._running_ids.discard(job.id)
 
     def _run_continuum(self, job: Job):
         def log(line: str):

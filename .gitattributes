@@ -1,0 +1,22 @@
+# Normalise text files to LF in the repository; check out with native endings.
+* text=auto
+
+# Shell scripts must keep LF; Windows batch files are stored as-is (CRLF).
+*.sh       text eol=lf
+*.command  text eol=lf
+*.bat      -text
+*.py       text eol=lf
+Dockerfile text eol=lf
+
+# Binary data: never touch line endings or diff as text.
+*.stl  binary
+*.STL  binary
+*.npz  binary
+*.npy  binary
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.zip  binary
+
+# Vendored minified libraries: no diffs in reviews.
+webapp/static/vendor/** linguist-vendored -diff

@@ -227,8 +227,12 @@ def test_index_html_defaults_are_paper_values():
 
 def test_reference_values_match_results_json():
     """paper_reference.json == the study records (when results/quick2 is present)."""
-    cands = [REPO / "results" / "quick2" / "results.json",
-             Path("/home/claude/freeto_py/results/quick2/results.json")]
+    # results/ is not in the repository (too large); FREETO_RESULTS_DIR may point at a
+    # copy, and a development checkout named freeto_py next to the repository is used too
+    cands = [REPO / "results" / "quick2" / "results.json"]
+    if os.environ.get("FREETO_RESULTS_DIR"):
+        cands.append(Path(os.environ["FREETO_RESULTS_DIR"]) / "quick2" / "results.json")
+    cands.append(REPO.parents[1] / "freeto_py" / "results" / "quick2" / "results.json")
     src = next((p for p in cands if p.is_file()), None)
     if src is None:
         pytest.skip("results/quick2/results.json not available")

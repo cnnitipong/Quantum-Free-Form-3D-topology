@@ -744,6 +744,13 @@ label .nocase sub { font-size: 0.75em; }
   border-bottom: 1px solid var(--line-strong);
 }
 .app-footer .foot-link:hover { border-bottom-color: var(--accent); }
+/* public (hosted) mode notice: own full-width line under the credits */
+.app-footer .foot-public {
+  flex: 1 0 100%;
+  color: var(--soft);
+}
+.app-footer .foot-public a { color: var(--ink); }
+.public-limit-note { color: var(--accent); }
 
 @media (max-width: 1100px) {
   .brand-sub { display: none; }

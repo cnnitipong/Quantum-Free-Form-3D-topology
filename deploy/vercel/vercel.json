@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    { "source": "/qff3d", "destination": "/qff3d/", "permanent": true },
+    { "source": "/qqf3d", "destination": "/qff3d/", "permanent": true },
+    { "source": "/qqf3d/:path*", "destination": "/qff3d/", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/qff3d/", "destination": "https://YOUR-SPACE-SUBDOMAIN.hf.space/" },
+    { "source": "/qff3d/:path*", "destination": "https://YOUR-SPACE-SUBDOMAIN.hf.space/:path*" }
+  ]
+}

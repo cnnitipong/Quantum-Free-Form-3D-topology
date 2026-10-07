@@ -1,0 +1,55 @@
+# Sync this repository to the Hugging Face Docker Space that serves
+# https://nitipong.com/qff3d (see deploy/huggingface/README.md).
+#
+# Needs, in GitHub -> Settings -> Secrets and variables -> Actions:
+#   secret   HF_TOKEN  a Hugging Face token with write access
+#   variable HF_SPACE  the Space id, e.g. cnnitipong/qff3d (default if unset)
+# Without the HF_TOKEN secret (e.g. in a fork) the job is skipped and the
+# workflow still succeeds.
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hf-space
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE: ${{ vars.HF_SPACE || 'cnnitipong/qff3d' }}
+    steps:
+      - name: Check for the HF_TOKEN secret
+        id: check
+        run: |
+          if [ -n "$HF_TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HF_TOKEN secret not set: skipping the Hugging Face deployment."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ok == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.ok == 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Install huggingface_hub
+        if: steps.check.outputs.ok == 'true'
+        run: python -m pip install --upgrade "huggingface_hub>=0.24"
+
+      - name: Upload to the Space
+        if: steps.check.outputs.ok == 'true'
+        run: python deploy/huggingface/push_to_space.py --space "$HF_SPACE"

@@ -1,5 +1,89 @@
 # QFF-3D: Quantum Free-Form 3D Topology Optimisation
 
+[![CI](https://github.com/cnnitipong/Quantum-Free-Form-3D-topology/actions/workflows/ci.yml/badge.svg)](https://github.com/cnnitipong/Quantum-Free-Form-3D-topology/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![Python 3.10-3.13](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](requirements.txt)
+
+QFF-3D optimises the topology of freeform 3D parts given as STL files (a design domain, fixed regions and
+load regions) and replaces the usual continuous design update with a **QUBO** (quadratic unconstrained
+binary optimisation) problem that a quantum annealer, QAOA or a classical binary solver can solve. It is a
+Python port and extension of FreeTO (Ibhadode, Fu & Qureshi, 2024, MIT licence) with a browser-based app:
+load an example or your own STLs, run QUBO-SA, MMA, BESO or OC, watch the design converge in 3D, check the
+result's physics, and download the optimised STL. The default settings reproduce the five continuum examples
+of the accompanying manuscript exactly.
+
+![QFF-3D web app](webapp/screenshots/04_done.png)
+
+**Try it online: <https://nitipong.com/qff3d>** (a shared demo server: one job at a time, meshes up to
+MeshControl 50, runs deleted after 2 hours; run it locally for everything else).
+
+## Quick start (local)
+
+Python 3.10 to 3.13. With the launchers, nothing else is needed: they create their own virtual
+environment on the first run and open the app in your browser.
+
+- Windows: double-click `Start QFF-3D (Windows).bat`
+- macOS: double-click `Start QFF-3D (macOS).command`
+- Linux: `./run_app.sh`
+
+Or with pip:
+
+```bash
+git clone https://github.com/cnnitipong/Quantum-Free-Form-3D-topology.git
+cd Quantum-Free-Form-3D-topology
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt                   # or: pip install -e ".[web]"
+python -m webapp.server --port 8000 --open        # web app at http://127.0.0.1:8000/
+python -m freeto --help                           # command line
+```
+
+Optional quantum backends (D-Wave Ocean, Qiskit): `pip install -r requirements-quantum.txt`.
+Details: [Quick start in detail](#quick-start-in-detail-launchers), [Core](#core), [Web app](#web-app).
+
+## Docker
+
+```bash
+docker build -t qff3d .
+docker run --rm -p 7860:7860 qff3d                       # http://localhost:7860/ (demo-server limits on)
+docker run --rm -p 7860:7860 -e QFF3D_PUBLIC=0 qff3d     # no limits (studies enabled)
+```
+
+The image runs the web app on port `$PORT` (7860) with one thread per process. `QFF3D_PUBLIC=1` (the image's
+default) enables the shared-server limits in `webapp/public.py`, each adjustable by an environment variable.
+Hosting the online version (Hugging Face Space + the `nitipong.com/qff3d` proxy):
+[`deploy/huggingface/README.md`](deploy/huggingface/README.md) and
+[`deploy/vercel/README.md`](deploy/vercel/README.md).
+
+## Reproducing the paper
+
+The web app and the CLI default to the paper's settings; [`docs/PAPER_SETTINGS.md`](docs/PAPER_SETTINGS.md)
+lists every setting of the manuscript's runs and how to reproduce Table 1 and the figures
+(`python -m freeto.study`, `freeto/paper.py`, `scripts/export_paper_reference.py`). Results depend on the
+floating-point summation order, so keep one thread per pool (`OMP_NUM_THREADS=1`, the default of the
+study and the web app).
+
+## Citation
+
+If you use QFF-3D, please cite the software ([`CITATION.cff`](CITATION.cff); GitHub's "Cite this repository"
+button) and the manuscript, which is **submitted, not yet published**:
+
+> N. Praphaphankul, "QUBO design updates for freeform 3D topology optimisation: a quantum-annealing-compatible
+> formulation benchmarked against MMA", submitted to *Engineering Structures* (2026).
+
+and the FreeTO paper it builds on: O. Ibhadode, Y.-F. Fu, A. Qureshi, "FreeTO - Freeform 3D topology
+optimization using a structured mesh with smooth boundaries in Matlab", *Advances in Engineering Software*
+198 (2024) 103790, doi:[10.1016/j.advengsoft.2024.103790](https://doi.org/10.1016/j.advengsoft.2024.103790).
+
+## Licence
+
+MIT ([`LICENSE`](LICENSE)). Third-party code and data (FreeTO, `intriangulation`, three.js, Chart.js) keep their
+own licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Contributions:
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+---
+
+## About this package
+
 QFF-3D is built on FreeTO (O. Ibhadode, Y.-F. Fu, A. Qureshi, "FreeTO - Freeform 3D topology optimization
 using a structured mesh with smooth boundaries in Matlab", *Advances in Engineering Software* 198 (2024) 103790,
 doi:[10.1016/j.advengsoft.2024.103790](https://doi.org/10.1016/j.advengsoft.2024.103790); MIT licence): a Python
@@ -11,17 +95,8 @@ runs), seed 0, the paper's mesh, iteration cap and evaluation, and a run of one 
 reproduces the published result exactly (see "Web app defaults = paper settings" below and
 `docs/PAPER_SETTINGS.md`); MMA, BESO sorting, OC and the other paper runs are one selection away.
 
-Source: <https://github.com/cnnitipong/Quantum-Free-Form-3D-topology>
-
-```bash
-git clone https://github.com/cnnitipong/Quantum-Free-Form-3D-topology.git
-cd Quantum-Free-Form-3D-topology
-```
-
 The Python package keeps the name `freeto` (imports, CLI `python -m freeto`, env vars `FREETO_*`, job and
 file formats are unchanged), so code and the paper's data package written against FreeTO-Python keep working.
-
-![QFF-3D web app](webapp/screenshots/04_done.png)
 
 Developed by Nitipong Praphaphankul, Architectural Intelligence (A.I.) Research Group, Faculty of Architecture,
 Chulalongkorn University. The QUBO method and its benchmark against MMA are described in the manuscript
@@ -31,7 +106,7 @@ benchmarked against MMA" (submitted to *Engineering Structures*); see `docs/NOTE
 
 See `docs/CONTRACT.md` for the shared interface between the numerical core and the web app.
 
-## Quick start
+## Quick start in detail (launchers)
 
 The fastest way to use QFF-3D is the web app: install Python once, then double-click
 a launcher. It creates its own environment the first time and reuses it after that - you
@@ -285,7 +360,7 @@ cd Quantum-Free-Form-3D-topology     # or wherever you cloned/unpacked it
 python -m webapp.server --port 8000 --open
 ```
 
-or use one of the launcher scripts (see "Quick start" above for first-run notes and where
+or use one of the launcher scripts (see "Quick start in detail (launchers)" above for first-run notes and where
 their virtual environment lives), which install `requirements.txt` only on the first run -
 or again if `requirements.txt` changes - and start the server:
 
@@ -309,21 +384,51 @@ without a working `freeto` install), set `FREETO_WEB_STUB=1` in the environment 
 launching. The active core is shown in the top-right badge (`core: real` / `core: stub`)
 and via `GET /api/health`.
 
+### Running it online (public mode, sub-path hosting)
+
+The frontend uses only relative URLs (every request goes through `apiUrl()` in `webapp/static/js/app.js`,
+relative to the page), so the same server works at `http://localhost:8000/` and behind a reverse proxy that
+serves it under a prefix and strips the prefix, e.g. `https://nitipong.com/qff3d/` ->
+`https://<space>.hf.space/`. `QFF3D_ROOT_PATH` or an `X-Forwarded-Prefix` header only sets the ASGI
+`root_path` for FastAPI's own `/docs` page.
+
+`QFF3D_PUBLIC=1` (set by the `Dockerfile`, off by default) turns the app into a shared demo server
+(`webapp/public.py`, tests in `tests/test_public_mode.py`). Defaults, each with its environment variable:
+
+| Limit | Default | Variable |
+|---|---|---|
+| jobs running at once (others queue; the UI shows the position) | 1 | `QFF3D_MAX_RUNNING` |
+| jobs waiting; beyond that HTTP 429 | 8 | `QFF3D_MAX_QUEUED` |
+| active jobs per visitor (first `X-Forwarded-For` hop, else peer) | 1 | `QFF3D_MAX_JOBS_PER_CLIENT` |
+| MeshControl (paper meshes: 24-46) | 50 | `QFF3D_MAX_MESH_CONTROL` |
+| iterations | 300 | `QFF3D_MAX_ITER` |
+| STL upload size / files per request | 20 MB / 6 | `QFF3D_MAX_UPLOAD_MB` / `QFF3D_MAX_UPLOAD_FILES` |
+| QUBO block size of the QAOA backends | 12 | `QFF3D_MAX_QAOA_BLOCK` |
+| wall time per job (then stopped like the Stop button) | 20 min | `QFF3D_MAX_JOB_MINUTES` |
+| job results and uploads deleted after | 120 min | `QFF3D_TTL_MINUTES` |
+
+In public mode multi-run studies are disabled (the Study tab says they are available in the local version),
+`GET /api/jobs` lists only the caller's own jobs, the repository's `results/` is not listed, and a footer
+notice explains the limits. A request above a limit is rejected with a message, never silently changed; only
+an example whose own mesh is finer than the cap is pre-filled at the cap, with a note. Nothing about how a
+run is computed changes. `QFF3D_DIRECT_URL` (optional) is shown to users whose STL is too large for the
+nitipong.com proxy (about 4.5 MB per request).
+
 ### Endpoints
 
 All JSON except where noted.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/health` | server + active-core status |
+| GET | `/api/health` | server + active-core status; `public` = the public-mode limits (`{"enabled": false}` locally) |
 | POST | `/api/upload` | multipart STL upload → `[{id, name, triangles, bbox}]` |
 | GET | `/api/files/{id}` | serve an uploaded/example STL (binary) |
 | GET | `/api/examples` | list bundled examples |
 | POST | `/api/examples/{name}/load` | register an example's STLs, return a prefilled config (paper settings for the five paper examples) and `paper` (as below) |
 | GET | `/api/examples/{name}/paper` | paper settings of an example as form values: `is_paper`, `methods`, `default_method`, `presets{method: fields}`, `mma_reference_refined`, `records_seed0`; for other examples `protocol_preset` |
 | POST | `/api/jobs` | create + queue a job (config referencing file ids; `audit` (bool, default `true`) switches the physics check on/off; every `QUBOOptions` field as `qubo_<name>`; `eval_beta`, `eval_refined`, `mma_constraint`, `mma_feasible_stop`, `init_perturb`, `init_seed`; `example` = the loaded example's name for the paper comparison); 400 on validation error |
-| GET | `/api/jobs` | list jobs run in this server session |
-| GET | `/api/jobs/{id}` | job status: stage, setup info, history arrays, log tail, error, and (continuum) `audit_enabled`, `audit_ok`, `n_components`, `floating_frac`, and the latest `audit_live` (`{n_components, floating_frac}`, QUBO runs; also per iteration in `history.audit_live`) |
+| GET | `/api/jobs` | list jobs run in this server session (public mode: only the caller's) |
+| GET | `/api/jobs/{id}` | job status: stage, setup info, history arrays, log tail, error, and (continuum) `audit_enabled`, `audit_ok`, `n_components`, `floating_frac`, and the latest `audit_live` (`{n_components, floating_frac}`, QUBO runs; also per iteration in `history.audit_live`); `queue_position` and `jobs_ahead` while queued |
 | POST | `/api/jobs/{id}/stop` | request cooperative stop |
 | GET | `/api/jobs/{id}/preview.stl` | latest cached live-preview mesh (binary STL) |
 | GET | `/api/jobs/{id}/result.stl` | final result mesh (binary STL) |
@@ -340,14 +445,14 @@ All JSON except where noted.
 | GET | `/api/study/status/{job_id}` | study job status: stage, progress (`index`/`n_runs`), log tail, `study_id` |
 | GET | `/api/study/list` | every study found on disk - `<workdir>/study/*` and, read-only, `results/*` written by the CLI (id `cli~<name>`): suite, created, rows, `n_invalid`, `has_audit`, `complete` - survives a server restart |
 | GET | `/api/study/results/{id}` | study results dict (+ `summary_md`) and the files in its results directory; `id` is a job id of this session **or** a `study_id` from `/api/study/list` |
-| GET | `/api/study/file/{id}/{path}` | serve one file from a study's results directory (figures, `results.csv`/`.json`) |
+| GET | `/api/study/file/{id}/{path}` | serve one file from a study's results directory (figures, `results.csv`/`.json`); the `url` of each file in `/api/study/results/{id}` is relative to the app (`api/study/file/...`) |
 | GET | `/api/jobs/{id}/audit` | physics-check dict of a finished continuum job (`ok`, `checks`, `n_components`, `floating_frac`, `components`, ...; see `docs/AUDIT_API.md`); 404 until done, 409 if the check was off for that job, 503 `audit module not available` if `freeto.audit` is missing |
 | GET | `/api/jobs/{id}/audit.png` | the 3-panel overlay figure (rendered on first request, cached as `jobs/<id>/audit.png`) |
 | POST | `/api/jobs/{id}/audit/run` | (re)compute the audit of a finished job - also for jobs run with `audit: false`; returns the dict |
 
 Only one job runs at a time **across every kind** (continuum, truss, study share one
-queue/worker); further submissions are queued FIFO and reported as "Queued (position N)"
-in the UI. All three job kinds are validated up front - a bad configuration (unknown
+queue/worker); further submissions are queued FIFO and reported as "Queued: N jobs ahead of
+yours" in the UI. All three job kinds are validated up front - a bad configuration (unknown
 benchmark, unavailable exact enumeration, unknown study suite, an unwired `optimizer="QUBO"`,
 ...) is rejected with `400`, never with a crash.
 
